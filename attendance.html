@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Điểm danh chương trình</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-inner">
+      <div class="logo-box">📍</div>
+      <div class="brand-title">Hệ thống Đăng ký & Điểm danh</div>
+    </div>
+  </div>
+
+  <div class="container">
+    <h2>Điểm danh chương trình</h2>
+
+    <div id="loading" class="alert alert-info">Đang tải thông tin chương trình và sinh viên...</div>
+
+    <div id="main" class="hidden">
+      <div class="box">
+        <div class="row"><span class="label">Mã chương trình</span><span class="value" id="programIdText"></span></div>
+        <div class="row"><span class="label">Chương trình</span><span class="value" id="programName"></span></div>
+        <div class="row"><span class="label">Trạng thái điểm danh</span><span class="value" id="attendanceStatus"></span></div>
+      </div>
+
+      <div class="box">
+        <div class="student-name" id="studentName"></div>
+        <div class="student-meta" id="studentMeta"></div>
+        <div class="student-meta" id="studentEmail"></div>
+      </div>
+
+      <video id="videoPreview" muted playsinline webkit-playsinline></video>
+      <canvas id="canvas"></canvas>
+
+      <button class="btn" id="cameraBtn" onclick="startCamera()">📷 Bật camera</button>
+      <button class="btn btn-success" id="submitBtn" onclick="submitAttendance()">📋 Gửi điểm danh</button>
+
+      <div id="result"></div>
+    </div>
+
+    <div class="footer">Khi điểm danh, sinh viên chụp hình cá nhân rõ mặt.</div>
+  </div>
+
+  <script src="assets/config.js"></script>
+  <script src="assets/api.js"></script>
+  <script>
+    const programId = getParam('programId');
+
+    let stream = null;
+    let videoReady = false;
+
+    const video = document.getElementById('videoPreview');
+    const canvas = document.getElementById('canvas');
+    const cameraBtn = document.getElementById('cameraBtn');
+    const submitBtn = document.getElementById('submitBtn');
+    const resultDiv = document.getElementById('result');
+
+    if (!programId) {
+      showFatal('Thiếu mã chương trình programId trên đường dẫn.');
+    } else {
+      setText('programIdText', programId);
+      loadInit();
+    }
+
+    async function loadInit() {
+      try {
+        const res = await jsonp('init-attendance', { programId: programId });
+
+        if (!res.ok) {
+          showFatal(res.message || 'Không tải được dữ liệu.');
+          return;
+        }
+
+        if (!res.program || !res.program.ok) {
+          showFatal(res.program && res.program.message ? res.program.message : 'Không tải được chương trình.');
+          return;
+        }
+
+        if (!res.student || !res.student.ok) {
+          showFatal(res.student && res.student.message ? res.student.message : 'Không tải được sinh viên.');
+          return;
+        }
+
+        const p = res.program;
+        const s = res.student;
+
+        setText('programName', p.tenChuongTrinh || '');
+        setHtml('attendanceStatus', badge(p.trangThaiDiemDanh || ''));
+
+        setText('studentName', s.hoTen || '');
+        setText('studentMeta', (s.maSV || '') + ' · Lớp ' + (s.lop || ''));
+        setText('studentEmail', s.email || '');
+
+        document.getElementById('loading').classList.add('hidden');
+        document.getElementById('main').classList.remove('hidden');
+
+      } catch (err) {
+        showFatal(err.message || String(err));
+      }
+    }
+
+    video.addEventListener('click', startCamera);
+
+    async function startCamera() {
+      resultDiv.innerHTML = '';
+
+      if (videoReady && stream) return;
+
+      try {
+        cameraBtn.disabled = true;
+        cameraBtn.innerHTML = '<div class="spinner"></div> Đang mở camera...';
+
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error('Trình duyệt không hỗ trợ camera.');
+        }
+
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'user' },
+            audio: false
+          });
+        } catch (err1) {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false
+          });
+        }
+
+        video.srcObject = stream;
+        video.muted = true;
+        video.setAttribute('playsinline', '');
+        video.setAttribute('webkit-playsinline', '');
+        await video.play();
+
+        videoReady = true;
+        cameraBtn.disabled = false;
+        cameraBtn.textContent = '✅ Camera đã bật';
+        cameraBtn.classList.add('btn-success');
+
+      } catch (err) {
+        videoReady = false;
+        stream = null;
+
+        cameraBtn.disabled = false;
+        cameraBtn.textContent = '📷 Bật camera';
+        cameraBtn.classList.remove('btn-success');
+
+        resultDiv.innerHTML =
+          '<div class="alert alert-danger">' +
+          '❌ Không thể truy cập camera. Hãy mở bằng Safari/Chrome, cấp quyền camera và thử lại.\n\n' +
+          'Tên lỗi: ' + esc(err.name || '') + '\n' +
+          'Thông báo: ' + esc(err.message || err) +
+          '</div>';
+      }
+    }
+
+    function getLocationOptional() {
+      return new Promise(function(resolve) {
+        if (!navigator.geolocation) return resolve(null);
+
+        navigator.geolocation.getCurrentPosition(
+          function(pos) {
+            resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
+          },
+          function() { resolve(null); },
+          { enableHighAccuracy: true, timeout: 7000, maximumAge: 0 }
+        );
+      });
+    }
+
+    async function submitAttendance() {
+      if (!videoReady || !stream || !video.srcObject) {
+        resultDiv.innerHTML = '<div class="alert alert-danger">❌ Chưa bật camera, không thể điểm danh.</div>';
+        return;
+      }
+
+      if (!video.videoWidth || !video.videoHeight) {
+        resultDiv.innerHTML = '<div class="alert alert-danger">❌ Camera chưa sẵn sàng. Vui lòng chờ vài giây rồi gửi lại.</div>';
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<div class="spinner"></div> Đang gửi...';
+      resultDiv.innerHTML = '';
+
+      try {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        const imageBase64 = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+        const gps = await getLocationOptional();
+
+        const res = await postToAppsScript('attendance', {
+          programId: programId,
+          imageBase64: imageBase64,
+          hasGps: gps ? 'true' : 'false',
+          latitude: gps ? gps.latitude : '',
+          longitude: gps ? gps.longitude : ''
+        });
+
+        if (res.ok) {
+          resultDiv.innerHTML = '<div class="alert alert-success">✅ ' + esc(res.message || 'Điểm danh thành công.') + '</div>';
+          submitBtn.style.display = 'none';
+          cameraBtn.style.display = 'none';
+          stopCamera();
+        } else {
+          resultDiv.innerHTML = '<div class="alert alert-danger">⚠️ ' + esc(res.message || 'Không thể điểm danh.') + '</div>';
+          submitBtn.disabled = false;
+          submitBtn.textContent = '📋 Gửi điểm danh';
+        }
+
+      } catch (err) {
+        resultDiv.innerHTML = '<div class="alert alert-danger">❌ Lỗi gửi điểm danh: ' + esc(err.message || err) + '</div>';
+        submitBtn.disabled = false;
+        submitBtn.textContent = '📋 Gửi điểm danh';
+      }
+    }
+
+    function stopCamera() {
+      if (stream) {
+        stream.getTracks().forEach(function(track) { track.stop(); });
+        stream = null;
+      }
+      video.srcObject = null;
+      videoReady = false;
+    }
+
+    function showFatal(message) {
+      const loading = document.getElementById('loading');
+      loading.className = 'alert alert-danger';
+      loading.textContent = message;
+      document.getElementById('main').classList.add('hidden');
+    }
+
+    window.addEventListener('beforeunload', stopCamera);
+  </script>
+</body>
+</html>

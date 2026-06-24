@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Đăng ký chương trình</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-inner">
+      <div class="logo-box">📍</div>
+      <div class="brand-title">Hệ thống Đăng ký & Điểm danh</div>
+    </div>
+  </div>
+
+  <div class="container">
+    <h2>Đăng ký tham gia chương trình</h2>
+
+    <div id="loading" class="alert alert-info">Đang tải thông tin chương trình và sinh viên...</div>
+
+    <div id="main" class="hidden">
+      <div class="box">
+        <div class="row"><span class="label">Mã chương trình</span><span class="value" id="programIdText"></span></div>
+        <div class="row"><span class="label">Chương trình</span><span class="value" id="programName"></span></div>
+        <div class="row"><span class="label">Địa điểm</span><span class="value" id="programPlace"></span></div>
+        <div class="row"><span class="label">Thời gian tổ chức</span><span class="value" id="programTime"></span></div>
+        <div class="row"><span class="label">Trạng thái đăng ký</span><span class="value" id="regStatus"></span></div>
+        <div class="row"><span class="label">Số lượng</span><span class="value" id="regCount"></span></div>
+      </div>
+
+      <div class="box">
+        <div class="student-name" id="studentName"></div>
+        <div class="student-meta" id="studentMeta"></div>
+        <div class="student-meta" id="studentEmail"></div>
+      </div>
+
+      <button class="btn" id="btnSubmit" onclick="submitRegistration()">Xác nhận đăng ký</button>
+      <div id="result"></div>
+    </div>
+
+    <div class="footer">Vui lòng đăng nhập bằng email trường để hệ thống nhận diện chính xác.</div>
+  </div>
+
+  <script src="assets/config.js"></script>
+  <script src="assets/api.js"></script>
+  <script>
+    const programId = getParam('programId');
+    const btnSubmit = document.getElementById('btnSubmit');
+
+    if (!programId) {
+      showFatal('Thiếu mã chương trình programId trên đường dẫn.');
+    } else {
+      setText('programIdText', programId);
+      loadInit();
+    }
+
+    async function loadInit() {
+      try {
+        const res = await jsonp('init-register', { programId: programId });
+
+        if (!res.ok) {
+          showFatal(res.message || 'Không tải được dữ liệu.');
+          return;
+        }
+
+        if (!res.program || !res.program.ok) {
+          showFatal(res.program && res.program.message ? res.program.message : 'Không tải được chương trình.');
+          return;
+        }
+
+        if (!res.student || !res.student.ok) {
+          showFatal(res.student && res.student.message ? res.student.message : 'Không tải được sinh viên.');
+          return;
+        }
+
+        const p = res.program;
+        const s = res.student;
+
+        setText('programName', p.tenChuongTrinh || '');
+        setText('programPlace', p.diaDiem || '—');
+        setText('programTime', p.thoiGianToChuc || '—');
+        setHtml('regStatus', badge(p.trangThaiDangKy || ''));
+
+        const limit = Number(p.soLuongGioiHan || 0);
+        const registered = Number(p.soLuongDaDangKy || 0);
+        setText('regCount', limit > 0 ? (registered + '/' + limit) : (registered + ' sinh viên'));
+
+        setText('studentName', s.hoTen || '');
+        setText('studentMeta', (s.maSV || '') + ' · Lớp ' + (s.lop || ''));
+        setText('studentEmail', s.email || '');
+
+        document.getElementById('loading').classList.add('hidden');
+        document.getElementById('main').classList.remove('hidden');
+
+      } catch (err) {
+        showFatal(err.message || String(err));
+      }
+    }
+
+    async function submitRegistration() {
+      btnSubmit.disabled = true;
+      btnSubmit.innerHTML = '<div class="spinner"></div> Đang xử lý...';
+      setHtml('result', '');
+
+      const res = await postToAppsScript('register', { programId: programId });
+
+      if (res.ok) {
+        setHtml('result', '<div class="alert alert-success">✅ ' + esc(res.message || 'Đăng ký thành công.') + '</div>');
+        btnSubmit.style.display = 'none';
+      } else {
+        setHtml('result', '<div class="alert alert-danger">⚠️ ' + esc(res.message || 'Không thể đăng ký.') + '</div>');
+        btnSubmit.disabled = false;
+        btnSubmit.textContent = 'Xác nhận đăng ký';
+      }
+    }
+
+    function showFatal(message) {
+      const loading = document.getElementById('loading');
+      loading.className = 'alert alert-danger';
+      loading.textContent = message;
+      document.getElementById('main').classList.add('hidden');
+    }
+  </script>
+</body>
+</html>

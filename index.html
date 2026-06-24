@@ -4,121 +4,87 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>BMU Camera Test</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #f4f6f8;
-      margin: 0;
-      padding: 16px;
-    }
-
-    .box {
-      max-width: 520px;
-      margin: 0 auto;
-      background: #fff;
-      padding: 16px;
-      border-radius: 12px;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.08);
-    }
-
-    h2 {
-      text-align: center;
-      color: #1e3a8a;
-    }
-
-    video {
-      width: 100%;
-      min-height: 280px;
-      background: #000;
-      border-radius: 10px;
-      display: block;
-      margin: 16px 0;
-      object-fit: cover;
-    }
-
-    canvas {
-      display: none;
-    }
-
-    button {
-      width: 100%;
-      padding: 14px;
-      border: none;
-      border-radius: 8px;
-      background: #2563eb;
-      color: #fff;
-      font-size: 16px;
-      font-weight: bold;
-      margin-top: 10px;
-    }
-
-    .ok {
-      background: #dcfce7;
-      color: #166534;
-      padding: 12px;
-      border-radius: 8px;
-      margin-top: 12px;
-    }
-
-    .err {
-      background: #fee2e2;
-      color: #991b1b;
-      padding: 12px;
-      border-radius: 8px;
-      margin-top: 12px;
-      white-space: pre-wrap;
-    }
-  </style>
+  <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
-  <div class="box">
+  <div class="topbar">
+    <div class="topbar-inner">
+      <div class="logo-box">📍</div>
+      <div class="brand-title">BMU - Kiểm tra camera</div>
+    </div>
+  </div>
+
+  <div class="container">
     <h2>Test mở camera</h2>
+
+    <div class="alert alert-info">
+      Bấm nút bên dưới để trình duyệt xin quyền camera. Nếu hiện hộp thoại quyền truy cập, bấm Cho phép.
+    </div>
 
     <video id="videoPreview" muted playsinline webkit-playsinline></video>
     <canvas id="canvas"></canvas>
 
-    <button onclick="startCamera()">📷 Bật camera</button>
-    <button onclick="capturePhoto()">Chụp thử</button>
+    <button class="btn" id="btnStart" onclick="startCamera()">📷 Bật camera</button>
+    <button class="btn btn-secondary" onclick="stopCamera()">Tắt camera</button>
+    <button class="btn btn-success" onclick="capturePhoto()">Chụp thử</button>
 
     <div id="result"></div>
+
+    <div class="links">
+      <a class="btn btn-secondary" href="register.html?programId=CT2026001">Mở thử trang đăng ký CT2026001</a>
+      <a class="btn btn-secondary" href="attendance.html?programId=CT2026001">Mở thử trang điểm danh CT2026001</a>
+    </div>
   </div>
 
   <script>
     let stream = null;
     let videoReady = false;
 
-    const video = document.getElementById("videoPreview");
-    const canvas = document.getElementById("canvas");
-    const result = document.getElementById("result");
+    const video = document.getElementById('videoPreview');
+    const canvas = document.getElementById('canvas');
+    const result = document.getElementById('result');
+    const btnStart = document.getElementById('btnStart');
 
     async function startCamera() {
-      result.innerHTML = "";
+      result.innerHTML = '';
+      btnStart.disabled = true;
+      btnStart.innerHTML = '<div class="spinner"></div> Đang xin quyền camera...';
 
       try {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          throw new Error("Trình duyệt không hỗ trợ getUserMedia.");
+          throw new Error('Trình duyệt không hỗ trợ getUserMedia.');
         }
 
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user" },
-          audio: false
-        });
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'user' },
+            audio: false
+          });
+        } catch (err1) {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false
+          });
+        }
 
         video.srcObject = stream;
         video.muted = true;
-        video.setAttribute("playsinline", "");
-        video.setAttribute("webkit-playsinline", "");
-
+        video.setAttribute('playsinline', '');
+        video.setAttribute('webkit-playsinline', '');
         await video.play();
 
         videoReady = true;
-        result.innerHTML = '<div class="ok">✅ Camera đã mở thành công.</div>';
+        result.innerHTML = '<div class="alert alert-success">✅ Camera đã mở thành công.</div>';
+        btnStart.textContent = '✅ Camera đã bật';
+        btnStart.disabled = false;
 
       } catch (err) {
         videoReady = false;
+        btnStart.disabled = false;
+        btnStart.textContent = '📷 Bật camera';
 
         result.innerHTML =
-          '<div class="err">' +
+          '<div class="alert alert-danger">' +
           '❌ Không mở được camera.\n\n' +
           'Tên lỗi: ' + (err.name || '') + '\n' +
           'Thông báo: ' + (err.message || err) + '\n\n' +
@@ -128,21 +94,32 @@
     }
 
     function capturePhoto() {
-      if (!videoReady) {
-        result.innerHTML = '<div class="err">Chưa bật camera.</div>';
+      if (!videoReady || !video.videoWidth) {
+        result.innerHTML = '<div class="alert alert-danger">Chưa bật camera hoặc camera chưa sẵn sàng.</div>';
         return;
       }
 
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
-      canvas.getContext("2d").drawImage(video, 0, 0);
+      canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      const imageBase64 = canvas.toDataURL("image/jpeg", 0.85);
-      result.innerHTML =
-        '<div class="ok">✅ Đã chụp được ảnh từ camera. Độ dài ảnh base64: ' +
-        imageBase64.length +
-        '</div>';
+      const imageBase64 = canvas.toDataURL('image/jpeg', 0.85);
+      result.innerHTML = '<div class="alert alert-success">✅ Đã chụp được ảnh từ camera. Độ dài ảnh base64: ' + imageBase64.length + '</div>';
     }
+
+    function stopCamera() {
+      if (stream) {
+        stream.getTracks().forEach(function(track) { track.stop(); });
+        stream = null;
+      }
+      video.srcObject = null;
+      videoReady = false;
+      btnStart.textContent = '📷 Bật camera';
+      btnStart.disabled = false;
+      result.innerHTML = '<div class="alert alert-info">Đã tắt camera.</div>';
+    }
+
+    window.addEventListener('beforeunload', stopCamera);
   </script>
 </body>
 </html>
