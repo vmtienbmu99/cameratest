@@ -5,122 +5,179 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Đăng ký chương trình</title>
   <link rel="stylesheet" href="assets/style.css">
-</head>
-<body>
-  <div class="topbar">
-    <div class="topbar-inner">
-      <div class="logo-box">📍</div>
-      <div class="brand-title">Hệ thống Đăng ký & Điểm danh</div>
-    </div>
-  </div>
-
-  <div class="container">
-    <h2>Đăng ký tham gia chương trình</h2>
-
-    <div id="loading" class="alert alert-info">Đang tải thông tin chương trình và sinh viên...</div>
-
-    <div id="main" class="hidden">
-      <div class="box">
-        <div class="row"><span class="label">Mã chương trình</span><span class="value" id="programIdText"></span></div>
-        <div class="row"><span class="label">Chương trình</span><span class="value" id="programName"></span></div>
-        <div class="row"><span class="label">Địa điểm</span><span class="value" id="programPlace"></span></div>
-        <div class="row"><span class="label">Thời gian tổ chức</span><span class="value" id="programTime"></span></div>
-        <div class="row"><span class="label">Trạng thái đăng ký</span><span class="value" id="regStatus"></span></div>
-        <div class="row"><span class="label">Số lượng</span><span class="value" id="regCount"></span></div>
-      </div>
-
-      <div class="box">
-        <div class="student-name" id="studentName"></div>
-        <div class="student-meta" id="studentMeta"></div>
-        <div class="student-meta" id="studentEmail"></div>
-      </div>
-
-      <button class="btn" id="btnSubmit" onclick="submitRegistration()">Xác nhận đăng ký</button>
-      <div id="result"></div>
-    </div>
-
-    <div class="footer">Vui lòng đăng nhập bằng email trường để hệ thống nhận diện chính xác.</div>
-  </div>
-
   <script src="assets/config.js"></script>
   <script src="assets/api.js"></script>
-  <script>
-    const programId = getParam('programId');
-    const btnSubmit = document.getElementById('btnSubmit');
+</head>
+<body>
+  <div class="topbar"><div class="wrap"><div class="brand"><div class="logo-box">📍</div><span>Hệ thống Đăng ký & Điểm danh</span></div></div></div>
 
-    if (!programId) {
-      showFatal('Thiếu mã chương trình programId trên đường dẫn.');
+  <main class="page">
+    <section class="card">
+      <h1>Đăng ký tham gia chương trình</h1>
+      <div id="programBox" class="alert info">Đang tải thông tin chương trình...</div>
+      <div id="authBox" class="hidden"></div>
+      <div id="studentBox" class="hidden"></div>
+      <button class="btn hidden" id="btnRegister" onclick="submitRegistration()">Xác nhận đăng ký</button>
+      <div id="result"></div>
+    </section>
+  </main>
+
+<script>
+const programId = getParam('programId');
+let currentProgram = null;
+let currentStudent = null;
+let currentToken = '';
+
+const programBox = document.getElementById('programBox');
+const authBox = document.getElementById('authBox');
+const studentBox = document.getElementById('studentBox');
+const btnRegister = document.getElementById('btnRegister');
+const result = document.getElementById('result');
+
+init();
+
+async function init(){
+  if (!programId){
+    programBox.className = 'alert danger';
+    programBox.textContent = 'Thiếu mã chương trình trên đường link.';
+    return;
+  }
+
+  try{
+    const auth = getAuth();
+    const res = await apiGet('init-register', { programId: programId, authToken: auth.token });
+    if (!res.ok) throw new Error(res.message || 'Không lấy được dữ liệu.');
+    if (!res.program || !res.program.ok) throw new Error(res.program && res.program.message ? res.program.message : 'Không tìm thấy chương trình.');
+
+    currentProgram = res.program;
+    renderProgram(currentProgram);
+
+    if (res.auth && res.auth.ok){
+      currentToken = auth.token;
+      currentStudent = res.auth.student;
+      saveAuth(currentToken, currentStudent.email, currentStudent);
+      renderStudent(currentStudent);
     } else {
-      setText('programIdText', programId);
-      loadInit();
+      clearAuth();
+      renderAuth();
     }
+  }catch(err){
+    programBox.className = 'alert danger';
+    programBox.textContent = err.message || err;
+  }
+}
 
-    async function loadInit() {
-      try {
-        const res = await jsonp('init-register', { programId: programId });
+function renderProgram(p){
+  programBox.className = '';
+  programBox.innerHTML = `
+    <div class="info-row"><span class="label">Mã chương trình</span><span class="value">${esc(programId)}</span></div>
+    <div class="info-row"><span class="label">Chương trình</span><span class="value">${esc(p.tenChuongTrinh || '')}</span></div>
+    <div class="info-row"><span class="label">Địa điểm</span><span class="value">${esc(p.diaDiem || '—')}</span></div>
+    <div class="info-row"><span class="label">Thời gian tổ chức</span><span class="value">${esc(p.thoiGianToChuc || '—')}</span></div>
+    <div class="info-row"><span class="label">Trạng thái đăng ký</span><span class="value">${esc(p.trangThaiDangKy || '—')}</span></div>
+    <div class="info-row"><span class="label">Số lượng</span><span class="value">${esc(p.soLuongDaDangKy || 0)} / ${esc(p.soLuongGioiHan || 'Không giới hạn')}</span></div>
+  `;
+}
 
-        if (!res.ok) {
-          showFatal(res.message || 'Không tải được dữ liệu.');
-          return;
-        }
+function renderAuth(){
+  btnRegister.classList.add('hidden');
+  studentBox.classList.add('hidden');
+  authBox.classList.remove('hidden');
+  authBox.innerHTML = `
+    <h3>Xác thực email trường</h3>
+    <div class="alert info">Nhập email trường để nhận mã OTP. Hệ thống chỉ chấp nhận email có trong danh sách sinh viên.</div>
+    <div class="form-group">
+      <label>Email trường</label>
+      <input id="emailInput" type="email" placeholder="vd: mssv@bmu.edu.vn" autocomplete="email">
+    </div>
+    <button class="btn" id="btnSendOtp" onclick="sendOtp()">Gửi mã xác thực</button>
+    <div id="otpArea" class="hidden">
+      <div class="form-group" style="margin-top:16px">
+        <label>Mã OTP</label>
+        <input id="otpInput" inputmode="numeric" maxlength="6" placeholder="Nhập mã 6 số">
+      </div>
+      <button class="btn" id="btnVerifyOtp" onclick="verifyOtp()">Xác nhận OTP</button>
+    </div>
+  `;
+}
 
-        if (!res.program || !res.program.ok) {
-          showFatal(res.program && res.program.message ? res.program.message : 'Không tải được chương trình.');
-          return;
-        }
-
-        if (!res.student || !res.student.ok) {
-          showFatal(res.student && res.student.message ? res.student.message : 'Không tải được sinh viên.');
-          return;
-        }
-
-        const p = res.program;
-        const s = res.student;
-
-        setText('programName', p.tenChuongTrinh || '');
-        setText('programPlace', p.diaDiem || '—');
-        setText('programTime', p.thoiGianToChuc || '—');
-        setHtml('regStatus', badge(p.trangThaiDangKy || ''));
-
-        const limit = Number(p.soLuongGioiHan || 0);
-        const registered = Number(p.soLuongDaDangKy || 0);
-        setText('regCount', limit > 0 ? (registered + '/' + limit) : (registered + ' sinh viên'));
-
-        setText('studentName', s.hoTen || '');
-        setText('studentMeta', (s.maSV || '') + ' · Lớp ' + (s.lop || ''));
-        setText('studentEmail', s.email || '');
-
-        document.getElementById('loading').classList.add('hidden');
-        document.getElementById('main').classList.remove('hidden');
-
-      } catch (err) {
-        showFatal(err.message || String(err));
-      }
+async function sendOtp(){
+  const email = document.getElementById('emailInput').value.trim().toLowerCase();
+  const btn = document.getElementById('btnSendOtp');
+  result.innerHTML = '';
+  if (!email){ result.innerHTML = '<div class="alert danger">Vui lòng nhập email trường.</div>'; return; }
+  if (window.BMU_CONFIG.ALLOWED_DOMAIN && !email.endsWith('@' + window.BMU_CONFIG.ALLOWED_DOMAIN)){
+    result.innerHTML = '<div class="alert danger">Vui lòng nhập email thuộc domain '+esc(window.BMU_CONFIG.ALLOWED_DOMAIN)+'.</div>'; return;
+  }
+  setBtnLoading(btn, 'Đang gửi mã...');
+  try{
+    const res = await apiGet('send-otp', { email: email });
+    if (res.ok){
+      document.getElementById('otpArea').classList.remove('hidden');
+      result.innerHTML = '<div class="alert success">✅ '+esc(res.message || 'Đã gửi mã OTP về email trường.')+'</div>';
+    }else{
+      result.innerHTML = '<div class="alert danger">'+esc(res.message || 'Không gửi được OTP.')+'</div>';
     }
+  }catch(err){ result.innerHTML = '<div class="alert danger">'+esc(err.message || err)+'</div>'; }
+  resetBtn(btn);
+}
 
-    async function submitRegistration() {
-      btnSubmit.disabled = true;
-      btnSubmit.innerHTML = '<div class="spinner"></div> Đang xử lý...';
-      setHtml('result', '');
-
-      const res = await postToAppsScript('register', { programId: programId });
-
-      if (res.ok) {
-        setHtml('result', '<div class="alert alert-success">✅ ' + esc(res.message || 'Đăng ký thành công.') + '</div>');
-        btnSubmit.style.display = 'none';
-      } else {
-        setHtml('result', '<div class="alert alert-danger">⚠️ ' + esc(res.message || 'Không thể đăng ký.') + '</div>');
-        btnSubmit.disabled = false;
-        btnSubmit.textContent = 'Xác nhận đăng ký';
-      }
+async function verifyOtp(){
+  const email = document.getElementById('emailInput').value.trim().toLowerCase();
+  const otp = document.getElementById('otpInput').value.trim();
+  const btn = document.getElementById('btnVerifyOtp');
+  result.innerHTML = '';
+  if (!otp){ result.innerHTML = '<div class="alert danger">Vui lòng nhập mã OTP.</div>'; return; }
+  setBtnLoading(btn, 'Đang xác thực...');
+  try{
+    const res = await apiGet('verify-otp', { email: email, otp: otp });
+    if (res.ok){
+      currentToken = res.authToken;
+      currentStudent = res.student;
+      saveAuth(currentToken, email, currentStudent);
+      authBox.classList.add('hidden');
+      renderStudent(currentStudent);
+      result.innerHTML = '<div class="alert success">✅ Xác thực thành công.</div>';
+    }else{
+      result.innerHTML = '<div class="alert danger">'+esc(res.message || 'OTP không hợp lệ.')+'</div>';
     }
+  }catch(err){ result.innerHTML = '<div class="alert danger">'+esc(err.message || err)+'</div>'; }
+  resetBtn(btn);
+}
 
-    function showFatal(message) {
-      const loading = document.getElementById('loading');
-      loading.className = 'alert alert-danger';
-      loading.textContent = message;
-      document.getElementById('main').classList.add('hidden');
-    }
-  </script>
+function renderStudent(s){
+  studentBox.classList.remove('hidden');
+  studentBox.innerHTML = `
+    <div class="student-card">
+      <div class="avatar">${esc(initials(s.hoTen))}</div>
+      <div>
+        <div class="student-name">${esc(s.hoTen)}</div>
+        <div class="student-meta">${esc(s.maSV)} · Lớp ${esc(s.lop)}</div>
+        <div class="student-meta">${esc(s.email)}</div>
+      </div>
+    </div>
+    <button class="btn secondary" onclick="logoutAuth()">Đổi email xác thực</button>
+  `;
+  btnRegister.classList.remove('hidden');
+}
+
+function logoutAuth(){ clearAuth(); currentToken=''; currentStudent=null; result.innerHTML=''; renderAuth(); }
+
+async function submitRegistration(){
+  const auth = getAuth();
+  const token = currentToken || auth.token;
+  if (!token){ renderAuth(); result.innerHTML='<div class="alert danger">Vui lòng xác thực email trường trước.</div>'; return; }
+  setBtnLoading(btnRegister, 'Đang đăng ký...');
+  result.innerHTML = '';
+  const res = await apiPost('register', { programId: programId, authToken: token });
+  if (res.ok){
+    result.innerHTML = '<div class="alert success">✅ '+esc(res.message || 'Đăng ký thành công.')+'</div>';
+    btnRegister.classList.add('hidden');
+  }else{
+    result.innerHTML = '<div class="alert danger">'+esc(res.message || 'Không đăng ký được.')+'</div>';
+    resetBtn(btnRegister);
+  }
+}
+</script>
 </body>
 </html>
