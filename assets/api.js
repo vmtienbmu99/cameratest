@@ -11,7 +11,10 @@
   window.apiGet = function(action, params){
     return new Promise(function(resolve, reject){
       if (!window.BMU_CONFIG || !window.BMU_CONFIG.API_URL || window.BMU_CONFIG.API_URL.indexOf('DAN_LINK') !== -1) {
-        reject(new Error('Chưa cấu hình API_URL trong assets/config.js.'));
+        reject(new Error(
+          'Chưa cấu hình API_URL trong assets/config.js. Config hiện tại: ' +
+          JSON.stringify(window.BMU_CONFIG || null)
+        ));
         return;
       }
 
@@ -62,7 +65,11 @@
   window.apiPost = function(action, data){
     return new Promise(function(resolve){
       if (!window.BMU_CONFIG || !window.BMU_CONFIG.API_URL || window.BMU_CONFIG.API_URL.indexOf('DAN_LINK') !== -1) {
-        resolve({ok:false, message:'Chưa cấu hình API_URL trong assets/config.js.'});
+        resolve({
+          ok: false,
+          message: 'Chưa cấu hình API_URL trong assets/config.js. Config hiện tại: ' +
+            JSON.stringify(window.BMU_CONFIG || null)
+        });
         return;
       }
 
