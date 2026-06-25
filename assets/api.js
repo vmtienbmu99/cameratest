@@ -44,7 +44,7 @@
       script.onerror = function(){
         if (done) return;
         cleanup();
-        reject(new Error('Không gọi được Apps Script API. Kiểm tra API_URL và quyền truy cập Web App.'));
+        reject(new Error('Không gọi được Apps Script API. API_URL hiện tại: ' + window.BMU_CONFIG.API_URL));
       };
 
       function cleanup(){
