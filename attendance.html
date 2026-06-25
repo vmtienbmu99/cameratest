@@ -22,11 +22,15 @@
       <div id="cameraArea" class="hidden">
         <div class="camera-frame" onclick="startCamera()">
           <video id="videoPreview" muted playsinline webkit-playsinline></video>
+          <img id="photoPreview" alt="Ảnh đã chụp">
           <div class="camera-hint" id="cameraHint">Bấm vào đây hoặc nút bên dưới để bật camera</div>
         </div>
         <canvas id="canvas"></canvas>
         <button class="btn" id="btnCamera" onclick="startCamera()">📷 Bật camera</button>
-        <button class="btn" id="btnSubmit" onclick="submitAttendance()">📋 Gửi điểm danh</button>
+        <button class="btn" id="btnCapture" onclick="capturePhoto()" style="display:none">📸 Chụp ảnh điểm danh</button>
+        <button class="btn secondary" id="btnRetake" onclick="retakePhoto()" style="display:none">Chụp lại</button>
+        <button class="btn" id="btnSubmit" onclick="submitAttendance()" style="display:none">📋 Gửi điểm danh</button>
+        <div class="capture-note" id="captureNote"></div>
       </div>
       <div id="result"></div>
     </section>
@@ -39,6 +43,7 @@ let currentStudent = null;
 let currentToken = '';
 let stream = null;
 let videoReady = false;
+let capturedImageBase64 = '';
 
 const programBox = document.getElementById('programBox');
 const authBox = document.getElementById('authBox');
@@ -47,9 +52,13 @@ const cameraArea = document.getElementById('cameraArea');
 const result = document.getElementById('result');
 const video = document.getElementById('videoPreview');
 const canvas = document.getElementById('canvas');
+const photoPreview = document.getElementById('photoPreview');
 const btnCamera = document.getElementById('btnCamera');
+const btnCapture = document.getElementById('btnCapture');
+const btnRetake = document.getElementById('btnRetake');
 const btnSubmit = document.getElementById('btnSubmit');
 const hint = document.getElementById('cameraHint');
+const captureNote = document.getElementById('captureNote');
 
 init();
 
@@ -129,10 +138,15 @@ async function sendOtp(){
     if (res.ok){
       document.getElementById('otpArea').classList.remove('hidden');
       result.innerHTML = '<div class="alert success">✅ '+esc(res.message || 'Đã gửi mã OTP về email trường.')+'</div>';
+      showToast(res.message || 'Đã gửi mã OTP về email trường.', 'success');
     }else{
       result.innerHTML = '<div class="alert danger">'+esc(res.message || 'Không gửi được OTP.')+'</div>';
+      showPopup('Gửi OTP thất bại', res.message || 'Không gửi được OTP.', 'danger');
     }
-  }catch(err){ result.innerHTML = '<div class="alert danger">'+esc(err.message || err)+'</div>'; }
+  }catch(err){
+    result.innerHTML = '<div class="alert danger">'+esc(err.message || err)+'</div>';
+    showPopup('Lỗi gửi OTP', err.message || String(err), 'danger');
+  }
   resetBtn(btn);
 }
 
@@ -152,10 +166,15 @@ async function verifyOtp(){
       authBox.classList.add('hidden');
       renderStudent(currentStudent);
       result.innerHTML = '<div class="alert success">✅ Xác thực thành công.</div>';
+      showToast('Xác thực thành công.', 'success');
     }else{
       result.innerHTML = '<div class="alert danger">'+esc(res.message || 'OTP không hợp lệ.')+'</div>';
+      showPopup('Xác thực thất bại', res.message || 'OTP không hợp lệ.', 'danger');
     }
-  }catch(err){ result.innerHTML = '<div class="alert danger">'+esc(err.message || err)+'</div>'; }
+  }catch(err){
+    result.innerHTML = '<div class="alert danger">'+esc(err.message || err)+'</div>';
+    showPopup('Lỗi xác thực', err.message || String(err), 'danger');
+  }
   resetBtn(btn);
 }
 
@@ -175,17 +194,19 @@ function renderStudent(s){
   cameraArea.classList.remove('hidden');
 }
 
-function logoutAuth(){ clearAuth(); currentToken=''; currentStudent=null; stopCamera(); result.innerHTML=''; renderAuth(); }
+function logoutAuth(){
+  clearAuth(); currentToken=''; currentStudent=null; capturedImageBase64=''; result.innerHTML='';
+  stopCamera(); resetCaptureUi(); renderAuth();
+}
 
 async function startCamera(){
   result.innerHTML = '';
   if (videoReady && stream) return;
+  setBtnLoading(btnCamera, 'Đang mở camera...');
   try{
-    btnCamera.disabled = true;
-    btnCamera.innerHTML = '<span class="spinner"></span>Đang mở camera...';
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('Trình duyệt không hỗ trợ camera.');
     try{
-      stream = await navigator.mediaDevices.getUserMedia({ video:{facingMode:'user'}, audio:false });
+      stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user' }, audio:false });
     }catch(e){
       stream = await navigator.mediaDevices.getUserMedia({ video:true, audio:false });
     }
@@ -195,25 +216,79 @@ async function startCamera(){
     video.setAttribute('webkit-playsinline','');
     await video.play();
     videoReady = true;
-    if (hint) hint.style.display = 'none';
-    btnCamera.disabled = false;
     btnCamera.innerHTML = '✅ Camera đã bật';
-    btnCamera.classList.add('success');
-  }catch(err){
-    videoReady = false; stream = null;
     btnCamera.disabled = false;
+    btnCamera.classList.add('success');
+    btnCapture.style.display = 'flex';
+    btnSubmit.style.display = 'none';
+    btnRetake.style.display = 'none';
+    photoPreview.style.display = 'none';
+    video.style.display = 'block';
+    if (hint) hint.style.display = 'none';
+    captureNote.textContent = 'Sau khi camera hiển thị rõ mặt, bấm “Chụp ảnh điểm danh”.';
+  }catch(err){
+    resetBtn(btnCamera);
     btnCamera.innerHTML = '📷 Bật camera';
     btnCamera.classList.remove('success');
-    result.innerHTML = '<div class="alert danger">❌ Không mở được camera.<br>Tên lỗi: '+esc(err.name || '')+'<br>Thông báo: '+esc(err.message || err)+'</div>';
+    result.innerHTML = '<div class="alert danger">Không mở được camera: '+esc(err.message || err)+'</div>';
+    showPopup('Không mở được camera', err.message || String(err), 'danger');
   }
+}
+
+function capturePhoto(){
+  if (!videoReady || !stream || !video.srcObject){
+    result.innerHTML = '<div class="alert danger">Chưa bật camera, không thể chụp ảnh.</div>';
+    return;
+  }
+  if (!video.videoWidth || !video.videoHeight){
+    result.innerHTML = '<div class="alert danger">Camera chưa sẵn sàng. Vui lòng chờ vài giây rồi chụp lại.</div>';
+    return;
+  }
+  capturedImageBase64 = captureBase64FromVideo();
+  photoPreview.src = 'data:image/jpeg;base64,' + capturedImageBase64;
+  photoPreview.style.display = 'block';
+  video.style.display = 'none';
+  btnCapture.style.display = 'none';
+  btnRetake.style.display = 'flex';
+  btnSubmit.style.display = 'flex';
+  captureNote.textContent = 'Ảnh đã được chụp. Dung lượng đã nén: khoảng ' + Math.round(capturedImageBase64.length * 0.75 / 1024) + ' KB.';
+  result.innerHTML = '<div class="alert success">✅ Đã chụp ảnh. Bấm “Gửi điểm danh” để hoàn tất.</div>';
+}
+
+function retakePhoto(){
+  capturedImageBase64 = '';
+  result.innerHTML = '';
+  photoPreview.src = '';
+  photoPreview.style.display = 'none';
+  video.style.display = 'block';
+  btnRetake.style.display = 'none';
+  btnSubmit.style.display = 'none';
+  if (videoReady){
+    btnCapture.style.display = 'flex';
+    captureNote.textContent = 'Sau khi camera hiển thị rõ mặt, bấm “Chụp ảnh điểm danh”.';
+  }else{
+    btnCapture.style.display = 'none';
+    captureNote.textContent = '';
+  }
+}
+
+function resetCaptureUi(){
+  capturedImageBase64 = '';
+  photoPreview.src = '';
+  photoPreview.style.display = 'none';
+  video.style.display = 'block';
+  btnCapture.style.display = 'none';
+  btnRetake.style.display = 'none';
+  btnSubmit.style.display = 'none';
+  captureNote.textContent = '';
 }
 
 function getLocationOptional(){
   return new Promise(function(resolve){
     if (!navigator.geolocation) return resolve(null);
     navigator.geolocation.getCurrentPosition(
-      function(pos){ resolve({latitude:pos.coords.latitude, longitude:pos.coords.longitude}); },
-      function(){ resolve(null); },
+      pos => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+      () => resolve(null),
       { enableHighAccuracy:true, timeout:7000, maximumAge:0 }
     );
   });
@@ -223,47 +298,55 @@ async function submitAttendance(){
   const auth = getAuth();
   const token = currentToken || auth.token;
   if (!token){ renderAuth(); result.innerHTML='<div class="alert danger">Vui lòng xác thực email trường trước.</div>'; return; }
-  if (!videoReady || !stream || !video.srcObject){ result.innerHTML='<div class="alert danger">Chưa bật camera, không thể điểm danh.</div>'; return; }
-  if (!video.videoWidth || !video.videoHeight){ result.innerHTML='<div class="alert danger">Camera chưa sẵn sàng. Vui lòng chờ vài giây rồi gửi lại.</div>'; return; }
+  if (!capturedImageBase64){ result.innerHTML='<div class="alert danger">Vui lòng chụp ảnh trước khi gửi điểm danh.</div>'; return; }
 
   setBtnLoading(btnSubmit, 'Đang gửi điểm danh...');
-  result.innerHTML = '';
+  result.innerHTML = '<div class="alert info">Đang gửi ảnh và ghi nhận điểm danh. Vui lòng chờ...</div>';
   try{
-    const imageBase64 = captureBase64FromVideo();
     const gps = await getLocationOptional();
     const res = await apiPost('attendance', {
       programId: programId,
       authToken: token,
-      imageBase64: imageBase64,
+      imageBase64: capturedImageBase64,
       hasGps: gps ? 'true' : 'false',
       latitude: gps ? gps.latitude : '',
       longitude: gps ? gps.longitude : ''
     });
     if (res.ok){
-      result.innerHTML = '<div class="alert success">✅ '+esc(res.message || 'Điểm danh thành công.')+'</div>';
+      const msg = res.message || 'Điểm danh thành công.';
+      result.innerHTML = '<div class="alert success">✅ '+esc(msg)+'</div>';
+      showPopup('Điểm danh thành công', msg, 'success');
       btnSubmit.classList.add('hidden');
       btnCamera.classList.add('hidden');
+      btnCapture.classList.add('hidden');
+      btnRetake.classList.add('hidden');
       stopCamera();
     }else{
-      result.innerHTML = '<div class="alert danger">'+esc(res.message || 'Không điểm danh được.')+'</div>';
+      const msg = res.message || 'Không điểm danh được.';
+      result.innerHTML = '<div class="alert danger">'+esc(msg)+'</div>';
+      showPopup('Điểm danh thất bại', msg, 'danger');
       resetBtn(btnSubmit);
     }
   }catch(err){
-    result.innerHTML = '<div class="alert danger">'+esc(err.message || err)+'</div>';
+    const msg = err.message || String(err);
+    result.innerHTML = '<div class="alert danger">'+esc(msg)+'</div>';
+    showPopup('Lỗi điểm danh', msg, 'danger');
     resetBtn(btnSubmit);
   }
 }
 
 function captureBase64FromVideo(){
-  const maxSize = 1200;
+  // Nén mạnh để gửi qua Apps Script ổn định trên điện thoại.
+  const maxSize = 640;
   let w = video.videoWidth;
   let h = video.videoHeight;
   if (w > h && w > maxSize){ h = Math.round(h * maxSize / w); w = maxSize; }
   if (h >= w && h > maxSize){ w = Math.round(w * maxSize / h); h = maxSize; }
   canvas.width = w;
   canvas.height = h;
-  canvas.getContext('2d').drawImage(video, 0, 0, w, h);
-  return canvas.toDataURL('image/jpeg', 0.82).split(',')[1];
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, w, h);
+  return canvas.toDataURL('image/jpeg', 0.55).split(',')[1];
 }
 
 function stopCamera(){
