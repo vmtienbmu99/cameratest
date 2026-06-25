@@ -3,53 +3,191 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>BMU - Đăng ký & Điểm danh</title>
+  <title>Điểm danh chương trình</title>
   <link rel="stylesheet" href="assets/style.css">
   <script src="assets/config.js"></script>
   <script src="assets/api.js"></script>
 </head>
 <body>
-  <div class="topbar">
-    <div class="wrap">
-      <div class="brand"><div class="logo-box">📍</div><span>Hệ thống Đăng ký & Điểm danh</span></div>
-    </div>
-  </div>
+  <div class="topbar"><div class="wrap"><div class="brand"><div class="logo-box">📍</div><span>Hệ thống Đăng ký & Điểm danh</span></div></div></div>
 
   <main class="page">
     <section class="card">
-      <h1>BMU Camera Test</h1>
-      <div class="alert info">Trang này dùng để kiểm tra camera trên GitHub Pages. Nếu mở được camera ở đây, trang điểm danh cũng sẽ mở được camera.</div>
-      <div class="camera-frame" onclick="startCamera()">
-        <video id="videoPreview" muted playsinline webkit-playsinline></video>
-        <div class="camera-hint" id="cameraHint">Bấm vào đây hoặc nút bên dưới để bật camera</div>
+      <h1>Điểm danh chương trình</h1>
+      <p class="notice">Khi điểm danh, sinh viên chụp hình cá nhân rõ mặt.</p>
+      <div id="programBox" class="alert info">Đang tải thông tin chương trình...</div>
+      <div id="authBox" class="hidden"></div>
+      <div id="studentBox" class="hidden"></div>
+
+      <div id="cameraArea" class="hidden">
+        <div class="camera-frame" onclick="startCamera()">
+          <video id="videoPreview" muted playsinline webkit-playsinline></video>
+          <div class="camera-hint" id="cameraHint">Bấm vào đây hoặc nút bên dưới để bật camera</div>
+        </div>
+        <canvas id="canvas"></canvas>
+        <button class="btn" id="btnCamera" onclick="startCamera()">📷 Bật camera</button>
+        <button class="btn" id="btnSubmit" onclick="submitAttendance()">📋 Gửi điểm danh</button>
       </div>
-      <canvas id="canvas"></canvas>
-      <button class="btn" id="btnStart" onclick="startCamera()">📷 Bật camera</button>
-      <button class="btn secondary" onclick="capturePhoto()">Chụp thử</button>
-      <button class="btn secondary" onclick="stopCamera()">Tắt camera</button>
       <div id="result"></div>
     </section>
   </main>
 
 <script>
+const programId = getParam('programId');
+let currentProgram = null;
+let currentStudent = null;
+let currentToken = '';
 let stream = null;
 let videoReady = false;
+
+const programBox = document.getElementById('programBox');
+const authBox = document.getElementById('authBox');
+const studentBox = document.getElementById('studentBox');
+const cameraArea = document.getElementById('cameraArea');
+const result = document.getElementById('result');
 const video = document.getElementById('videoPreview');
 const canvas = document.getElementById('canvas');
-const result = document.getElementById('result');
-const btnStart = document.getElementById('btnStart');
+const btnCamera = document.getElementById('btnCamera');
+const btnSubmit = document.getElementById('btnSubmit');
 const hint = document.getElementById('cameraHint');
+
+init();
+
+async function init(){
+  if (!programId){
+    programBox.className = 'alert danger';
+    programBox.textContent = 'Thiếu mã chương trình trên đường link.';
+    return;
+  }
+  try{
+    const auth = getAuth();
+    const res = await apiGet('init-attendance', { programId: programId, authToken: auth.token });
+    if (!res.ok) throw new Error(res.message || 'Không lấy được dữ liệu.');
+    if (!res.program || !res.program.ok) throw new Error(res.program && res.program.message ? res.program.message : 'Không tìm thấy chương trình.');
+
+    currentProgram = res.program;
+    renderProgram(currentProgram);
+
+    if (res.auth && res.auth.ok){
+      currentToken = auth.token;
+      currentStudent = res.auth.student;
+      saveAuth(currentToken, currentStudent.email, currentStudent);
+      renderStudent(currentStudent);
+    } else {
+      clearAuth();
+      renderAuth();
+    }
+  }catch(err){
+    programBox.className = 'alert danger';
+    programBox.textContent = err.message || err;
+  }
+}
+
+function renderProgram(p){
+  programBox.className = '';
+  programBox.innerHTML = `
+    <div class="info-row"><span class="label">Mã chương trình</span><span class="value">${esc(programId)}</span></div>
+    <div class="info-row"><span class="label">Chương trình</span><span class="value">${esc(p.tenChuongTrinh || '')}</span></div>
+    <div class="info-row"><span class="label">Địa điểm</span><span class="value">${esc(p.diaDiem || '—')}</span></div>
+    <div class="info-row"><span class="label">Trạng thái điểm danh</span><span class="value">${esc(p.trangThaiDiemDanh || '—')}</span></div>
+  `;
+}
+
+function renderAuth(){
+  cameraArea.classList.add('hidden');
+  studentBox.classList.add('hidden');
+  authBox.classList.remove('hidden');
+  authBox.innerHTML = `
+    <h3>Xác thực email trường</h3>
+    <div class="alert info">Nhập email trường để nhận mã OTP. Sau khi xác thực mới có thể điểm danh.</div>
+    <div class="form-group">
+      <label>Email trường</label>
+      <input id="emailInput" type="email" placeholder="vd: mssv@bmu.edu.vn" autocomplete="email">
+    </div>
+    <button class="btn" id="btnSendOtp" onclick="sendOtp()">Gửi mã xác thực</button>
+    <div id="otpArea" class="hidden">
+      <div class="form-group" style="margin-top:16px">
+        <label>Mã OTP</label>
+        <input id="otpInput" inputmode="numeric" maxlength="6" placeholder="Nhập mã 6 số">
+      </div>
+      <button class="btn" id="btnVerifyOtp" onclick="verifyOtp()">Xác nhận OTP</button>
+    </div>
+  `;
+}
+
+async function sendOtp(){
+  const email = document.getElementById('emailInput').value.trim().toLowerCase();
+  const btn = document.getElementById('btnSendOtp');
+  result.innerHTML = '';
+  if (!email){ result.innerHTML = '<div class="alert danger">Vui lòng nhập email trường.</div>'; return; }
+  if (window.BMU_CONFIG.ALLOWED_DOMAIN && !email.endsWith('@' + window.BMU_CONFIG.ALLOWED_DOMAIN)){
+    result.innerHTML = '<div class="alert danger">Vui lòng nhập email thuộc domain '+esc(window.BMU_CONFIG.ALLOWED_DOMAIN)+'.</div>'; return;
+  }
+  setBtnLoading(btn, 'Đang gửi mã...');
+  try{
+    const res = await apiGet('send-otp', { email: email });
+    if (res.ok){
+      document.getElementById('otpArea').classList.remove('hidden');
+      result.innerHTML = '<div class="alert success">✅ '+esc(res.message || 'Đã gửi mã OTP về email trường.')+'</div>';
+    }else{
+      result.innerHTML = '<div class="alert danger">'+esc(res.message || 'Không gửi được OTP.')+'</div>';
+    }
+  }catch(err){ result.innerHTML = '<div class="alert danger">'+esc(err.message || err)+'</div>'; }
+  resetBtn(btn);
+}
+
+async function verifyOtp(){
+  const email = document.getElementById('emailInput').value.trim().toLowerCase();
+  const otp = document.getElementById('otpInput').value.trim();
+  const btn = document.getElementById('btnVerifyOtp');
+  result.innerHTML = '';
+  if (!otp){ result.innerHTML = '<div class="alert danger">Vui lòng nhập mã OTP.</div>'; return; }
+  setBtnLoading(btn, 'Đang xác thực...');
+  try{
+    const res = await apiGet('verify-otp', { email: email, otp: otp });
+    if (res.ok){
+      currentToken = res.authToken;
+      currentStudent = res.student;
+      saveAuth(currentToken, email, currentStudent);
+      authBox.classList.add('hidden');
+      renderStudent(currentStudent);
+      result.innerHTML = '<div class="alert success">✅ Xác thực thành công.</div>';
+    }else{
+      result.innerHTML = '<div class="alert danger">'+esc(res.message || 'OTP không hợp lệ.')+'</div>';
+    }
+  }catch(err){ result.innerHTML = '<div class="alert danger">'+esc(err.message || err)+'</div>'; }
+  resetBtn(btn);
+}
+
+function renderStudent(s){
+  studentBox.classList.remove('hidden');
+  studentBox.innerHTML = `
+    <div class="student-card">
+      <div class="avatar">${esc(initials(s.hoTen))}</div>
+      <div>
+        <div class="student-name">${esc(s.hoTen)}</div>
+        <div class="student-meta">${esc(s.maSV)} · Lớp ${esc(s.lop)}</div>
+        <div class="student-meta">${esc(s.email)}</div>
+      </div>
+    </div>
+    <button class="btn secondary" onclick="logoutAuth()">Đổi email xác thực</button>
+  `;
+  cameraArea.classList.remove('hidden');
+}
+
+function logoutAuth(){ clearAuth(); currentToken=''; currentStudent=null; stopCamera(); result.innerHTML=''; renderAuth(); }
 
 async function startCamera(){
   result.innerHTML = '';
+  if (videoReady && stream) return;
   try{
-    btnStart.disabled = true;
-    btnStart.innerHTML = '<span class="spinner"></span>Đang mở camera...';
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('Trình duyệt không hỗ trợ getUserMedia.');
+    btnCamera.disabled = true;
+    btnCamera.innerHTML = '<span class="spinner"></span>Đang mở camera...';
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('Trình duyệt không hỗ trợ camera.');
     try{
-      stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'}, audio:false});
+      stream = await navigator.mediaDevices.getUserMedia({ video:{facingMode:'user'}, audio:false });
     }catch(e){
-      stream = await navigator.mediaDevices.getUserMedia({video:true, audio:false});
+      stream = await navigator.mediaDevices.getUserMedia({ video:true, audio:false });
     }
     video.srcObject = stream;
     video.muted = true;
@@ -58,38 +196,82 @@ async function startCamera(){
     await video.play();
     videoReady = true;
     if (hint) hint.style.display = 'none';
-    btnStart.disabled = false;
-    btnStart.innerHTML = '✅ Camera đã bật';
-    btnStart.classList.add('success');
-    result.innerHTML = '<div class="alert success">✅ Camera đã mở thành công.</div>';
+    btnCamera.disabled = false;
+    btnCamera.innerHTML = '✅ Camera đã bật';
+    btnCamera.classList.add('success');
   }catch(err){
-    videoReady = false;
-    btnStart.disabled = false;
-    btnStart.innerHTML = '📷 Bật camera';
-    btnStart.classList.remove('success');
-    result.innerHTML = '<div class="alert danger">❌ Không mở được camera.<br><br>Tên lỗi: '+esc(err.name || '')+'<br>Thông báo: '+esc(err.message || err)+'<br><br>User Agent:<br>'+esc(navigator.userAgent)+'</div>';
+    videoReady = false; stream = null;
+    btnCamera.disabled = false;
+    btnCamera.innerHTML = '📷 Bật camera';
+    btnCamera.classList.remove('success');
+    result.innerHTML = '<div class="alert danger">❌ Không mở được camera.<br>Tên lỗi: '+esc(err.name || '')+'<br>Thông báo: '+esc(err.message || err)+'</div>';
   }
 }
 
-function capturePhoto(){
-  if (!videoReady || !video.videoWidth){
-    result.innerHTML = '<div class="alert danger">Chưa bật camera hoặc camera chưa sẵn sàng.</div>';
-    return;
+function getLocationOptional(){
+  return new Promise(function(resolve){
+    if (!navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition(
+      function(pos){ resolve({latitude:pos.coords.latitude, longitude:pos.coords.longitude}); },
+      function(){ resolve(null); },
+      { enableHighAccuracy:true, timeout:7000, maximumAge:0 }
+    );
+  });
+}
+
+async function submitAttendance(){
+  const auth = getAuth();
+  const token = currentToken || auth.token;
+  if (!token){ renderAuth(); result.innerHTML='<div class="alert danger">Vui lòng xác thực email trường trước.</div>'; return; }
+  if (!videoReady || !stream || !video.srcObject){ result.innerHTML='<div class="alert danger">Chưa bật camera, không thể điểm danh.</div>'; return; }
+  if (!video.videoWidth || !video.videoHeight){ result.innerHTML='<div class="alert danger">Camera chưa sẵn sàng. Vui lòng chờ vài giây rồi gửi lại.</div>'; return; }
+
+  setBtnLoading(btnSubmit, 'Đang gửi điểm danh...');
+  result.innerHTML = '';
+  try{
+    const imageBase64 = captureBase64FromVideo();
+    const gps = await getLocationOptional();
+    const res = await apiPost('attendance', {
+      programId: programId,
+      authToken: token,
+      imageBase64: imageBase64,
+      hasGps: gps ? 'true' : 'false',
+      latitude: gps ? gps.latitude : '',
+      longitude: gps ? gps.longitude : ''
+    });
+    if (res.ok){
+      result.innerHTML = '<div class="alert success">✅ '+esc(res.message || 'Điểm danh thành công.')+'</div>';
+      btnSubmit.classList.add('hidden');
+      btnCamera.classList.add('hidden');
+      stopCamera();
+    }else{
+      result.innerHTML = '<div class="alert danger">'+esc(res.message || 'Không điểm danh được.')+'</div>';
+      resetBtn(btnSubmit);
+    }
+  }catch(err){
+    result.innerHTML = '<div class="alert danger">'+esc(err.message || err)+'</div>';
+    resetBtn(btnSubmit);
   }
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);
-  const dataUrl = canvas.toDataURL('image/jpeg',0.85);
-  result.innerHTML = '<div class="alert success">✅ Đã chụp được ảnh từ camera. Độ dài base64: '+dataUrl.length+'</div>';
+}
+
+function captureBase64FromVideo(){
+  const maxSize = 1200;
+  let w = video.videoWidth;
+  let h = video.videoHeight;
+  if (w > h && w > maxSize){ h = Math.round(h * maxSize / w); w = maxSize; }
+  if (h >= w && h > maxSize){ w = Math.round(w * maxSize / h); h = maxSize; }
+  canvas.width = w;
+  canvas.height = h;
+  canvas.getContext('2d').drawImage(video, 0, 0, w, h);
+  return canvas.toDataURL('image/jpeg', 0.82).split(',')[1];
 }
 
 function stopCamera(){
-  if(stream){stream.getTracks().forEach(t=>t.stop()); stream=null;}
+  if (stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
   video.srcObject = null;
   videoReady = false;
   if (hint) hint.style.display = 'flex';
-  btnStart.innerHTML = '📷 Bật camera';
-  btnStart.classList.remove('success');
+  if (btnCamera){ btnCamera.innerHTML='📷 Bật camera'; btnCamera.classList.remove('success'); btnCamera.disabled=false; }
 }
 window.addEventListener('beforeunload', stopCamera);
 </script>
