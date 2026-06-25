@@ -322,6 +322,20 @@ async function submitAttendance(){
       btnRetake.classList.add('hidden');
       stopCamera();
     }else{
+      if (res.timeout) {
+        result.innerHTML = '<div class="alert warning">Không nhận được phản hồi ngay. Đang kiểm tra lại trạng thái điểm danh...</div>';
+        try {
+          const checked = await apiGet('check-attendance', { programId: programId, authToken: token });
+          if (checked && checked.ok && checked.trangThaiDiemDanh === 'Đã điểm danh') {
+            const msg = 'Điểm danh đã được ghi nhận. Ảnh: ' + (checked.linkAnh ? 'đã lưu' : 'chưa có link ảnh');
+            result.innerHTML = '<div class="alert success">✅ '+esc(msg)+'</div>';
+            showPopup('Điểm danh thành công', msg, 'success');
+            btnSubmit.classList.add('hidden'); btnCamera.classList.add('hidden'); btnCapture.classList.add('hidden'); btnRetake.classList.add('hidden');
+            stopCamera();
+            return;
+          }
+        } catch(e) {}
+      }
       const msg = res.message || 'Không điểm danh được.';
       result.innerHTML = '<div class="alert danger">'+esc(msg)+'</div>';
       showPopup('Điểm danh thất bại', msg, 'danger');
@@ -337,7 +351,7 @@ async function submitAttendance(){
 
 function captureBase64FromVideo(){
   // Nén mạnh để gửi qua Apps Script ổn định trên điện thoại.
-  const maxSize = 640;
+  const maxSize = 480;
   let w = video.videoWidth;
   let h = video.videoHeight;
   if (w > h && w > maxSize){ h = Math.round(h * maxSize / w); w = maxSize; }
@@ -346,7 +360,7 @@ function captureBase64FromVideo(){
   canvas.height = h;
   const ctx = canvas.getContext('2d');
   ctx.drawImage(video, 0, 0, w, h);
-  return canvas.toDataURL('image/jpeg', 0.55).split(',')[1];
+  return canvas.toDataURL('image/jpeg', 0.45).split(',')[1];
 }
 
 function stopCamera(){
