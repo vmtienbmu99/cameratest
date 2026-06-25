@@ -166,15 +166,31 @@ function logoutAuth(){ clearAuth(); currentToken=''; currentStudent=null; result
 async function submitRegistration(){
   const auth = getAuth();
   const token = currentToken || auth.token;
-  if (!token){ renderAuth(); result.innerHTML='<div class="alert danger">Vui lòng xác thực email trường trước.</div>'; return; }
+  if (!token){
+    renderAuth();
+    result.innerHTML='<div class="alert danger">Vui lòng xác thực email trường trước.</div>';
+    showPopup('Chưa xác thực email', 'Vui lòng xác thực email trường trước khi đăng ký.', 'danger');
+    return;
+  }
   setBtnLoading(btnRegister, 'Đang đăng ký...');
   result.innerHTML = '';
-  const res = await apiPost('register', { programId: programId, authToken: token });
-  if (res.ok){
-    result.innerHTML = '<div class="alert success">✅ '+esc(res.message || 'Đăng ký thành công.')+'</div>';
-    btnRegister.classList.add('hidden');
-  }else{
-    result.innerHTML = '<div class="alert danger">'+esc(res.message || 'Không đăng ký được.')+'</div>';
+  try{
+    const res = await apiPost('register', { programId: programId, authToken: token });
+    if (res.ok){
+      const msg = res.message || 'Đăng ký thành công.';
+      result.innerHTML = '<div class="alert success">✅ '+esc(msg)+'</div>';
+      showPopup('Đăng ký thành công', msg, 'success');
+      btnRegister.classList.add('hidden');
+    }else{
+      const msg = res.message || 'Không đăng ký được.';
+      result.innerHTML = '<div class="alert danger">'+esc(msg)+'</div>';
+      showPopup('Đăng ký thất bại', msg, 'danger');
+      resetBtn(btnRegister);
+    }
+  }catch(err){
+    const msg = err.message || String(err);
+    result.innerHTML = '<div class="alert danger">'+esc(msg)+'</div>';
+    showPopup('Lỗi đăng ký', msg, 'danger');
     resetBtn(btnRegister);
   }
 }
