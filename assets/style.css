@@ -45,11 +45,11 @@ body{
   font-size:22px;
 }
 
-.app-logo,
-.logo-box {
+.app-logo {
   width: 120px;
   height: 54px;
   min-width: 120px;
+  max-width: 120px;
   border-radius: 10px;
   background: transparent;
   border: none;
@@ -57,12 +57,14 @@ body{
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  flex-shrink: 0;
 }
 
-.app-logo img,
-.logo-box img {
+.app-logo img {
+  display: block;
   width: 120px !important;
   height: auto !important;
+  max-width: 120px !important;
   max-height: 54px !important;
   object-fit: contain;
 }
