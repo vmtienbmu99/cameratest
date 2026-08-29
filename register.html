@@ -196,7 +196,7 @@ async function submitRegistration(){
     }else{
       const msg = res.message || 'Không đăng ký được.';
       result.innerHTML = '<div class="alert danger">'+esc(msg)+'</div>';
-      showPopup('Sinh viên đã có tên trong danh sách đăng ký thành công', msg, 'danger');
+      showPopup('Đăng ký không thành công', msg, 'danger');
       resetBtn(btnRegister);
     }
   }catch(err){
