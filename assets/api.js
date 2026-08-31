@@ -36,7 +36,7 @@
         if (done) return;
         cleanup();
         reject(new Error('Hết thời gian chờ khi gọi Apps Script API.'));
-      }, 20000);
+      }, 60000);
 
       window[callbackName] = function(data){
         if (done) return;
