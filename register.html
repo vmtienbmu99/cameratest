@@ -14,7 +14,7 @@
     };
   </script>
   
-  <script src="./assets/api.js?v=20260625d"></script>
+  <script src="./assets/api.js?v=20261102a"></script>
 </head>
 <body>
   <div class="topbar"><div class="wrap"><div class="brand">
@@ -63,6 +63,7 @@ async function init(){
 
     currentProgram = res.program;
     renderProgram(currentProgram);
+    startLiveRefresh();
 
     if (res.auth && res.auth.ok){
       currentToken = auth.token;
@@ -86,8 +87,8 @@ function renderProgram(p){
     <div class="info-row"><span class="label">Chương trình</span><span class="value">${esc(p.tenChuongTrinh || '')}</span></div>
     <div class="info-row"><span class="label">Địa điểm</span><span class="value">${esc(p.diaDiem || '—')}</span></div>
     <div class="info-row"><span class="label">Thời gian tổ chức</span><span class="value">${esc(p.thoiGianToChuc || '—')}</span></div>
-    <div class="info-row"><span class="label">Trạng thái đăng ký</span><span class="value">${esc(p.trangThaiDangKy || '—')}</span></div>
-    <div class="info-row"><span class="label">Số lượng</span><span class="value">${esc(p.soLuongDaDangKy || 0)} / ${esc(p.soLuongGioiHan || 'Không giới hạn')}</span></div>
+    <div class="info-row"><span class="label">Trạng thái đăng ký</span><span class="value" id="statusValue">${esc(p.trangThaiDangKy || '—')}</span></div>
+    <div class="info-row"><span class="label">Số lượng</span><span class="value"><span id="countValue">${esc(p.soLuongDaDangKy || 0)}</span> / ${esc(p.soLuongGioiHan || 'Không giới hạn')}</span></div>
   `;
 }
 
@@ -175,7 +176,85 @@ function renderStudent(s){
 
 function logoutAuth(){ clearAuth(); currentToken=''; currentStudent=null; result.innerHTML=''; renderAuth(); }
 
+// ===== Cập nhật số lượng gần thời gian thực =====
+let refreshTimer = null;
+let submitting = false;
+
+function startLiveRefresh(){
+  stopLiveRefresh();
+  refreshTimer = setInterval(refreshProgramStatus, 8000);
+  document.addEventListener('visibilitychange', function(){
+    if (!document.hidden) refreshProgramStatus();
+  });
+}
+function stopLiveRefresh(){ if (refreshTimer){ clearInterval(refreshTimer); refreshTimer = null; } }
+
+async function refreshProgramStatus(){
+  if (submitting || document.hidden) return;
+  try{
+    const p = await apiGet('program-status', { programId: programId }, 20000);
+    if (!p || !p.ok) return;
+    currentProgram = p;
+    applyProgramLive(p);
+  }catch(e){ /* bỏ qua lỗi mạng tạm thời */ }
+}
+
+function applyProgramLive(p){
+  const c = document.getElementById('countValue');
+  const st = document.getElementById('statusValue');
+  if (c) c.textContent = p.soLuongDaDangKy || 0;
+  if (st) st.textContent = p.trangThaiDangKy || '—';
+  const limit = Number(p.soLuongGioiHan || 0);
+  const full = (limit > 0 && Number(p.soLuongDaDangKy || 0) >= limit) || p.trangThaiDangKy === 'Đã đủ số lượng';
+  if (full && !btnRegister.classList.contains('hidden') && !submitting){
+    btnRegister.classList.add('hidden');
+    result.innerHTML = '<div class="alert danger">Chương trình đã đủ số lượng sinh viên đăng ký.</div>';
+  }
+}
+
+// ===== Đăng ký =====
+const MSG_CONTACT = 'Đăng ký thất bại. Vui lòng liên hệ Phòng CTSV để được hỗ trợ.';
+
+function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+
+// Khi không nhận được phản hồi rõ ràng, kiểm tra thẳng trong danh sách đăng ký
+async function verifyRegistered(token){
+  for (let i = 0; i < 3; i++){
+    try{
+      const c = await apiGet('check-registration', { programId: programId, authToken: token }, 30000);
+      if (c && c.ok) return !!c.registered;
+    }catch(e){}
+    await sleep(2500);
+  }
+  return null; // không xác định được
+}
+
+function showRegisterOutcome(code, detail, refId){
+  if (code === 'SUCCESS'){
+    const msg = 'Đăng ký thành công.';
+    result.innerHTML = '<div class="alert success">✅ '+esc(msg)+'</div>';
+    showPopup('Đăng ký thành công', msg, 'success');
+    btnRegister.classList.add('hidden');
+  } else if (code === 'ALREADY'){
+    const msg = 'Bạn đã đăng ký thành công chương trình này rồi.';
+    result.innerHTML = '<div class="alert success">✅ '+esc(msg)+'</div>';
+    showPopup('Đã đăng ký thành công', msg, 'success');
+    btnRegister.classList.add('hidden');
+  } else if (code === 'FULL'){
+    const msg = 'Đăng ký thất bại. Lý do: chương trình đã đủ số lượng sinh viên đăng ký.';
+    result.innerHTML = '<div class="alert danger">'+esc(msg)+'</div>';
+    showPopup('Đăng ký thất bại', msg, 'danger');
+    btnRegister.classList.add('hidden');
+  } else {
+    const msg = MSG_CONTACT + (detail ? ' (Chi tiết: ' + detail + ')' : '') + (refId ? ' Mã tham chiếu: ' + refId : '');
+    result.innerHTML = '<div class="alert danger">'+esc(msg)+'</div>';
+    showPopup('Đăng ký thất bại', msg, 'danger');
+    resetBtn(btnRegister);
+  }
+}
+
 async function submitRegistration(){
+  if (submitting) return;
   const auth = getAuth();
   const token = currentToken || auth.token;
   if (!token){
@@ -184,27 +263,31 @@ async function submitRegistration(){
     showPopup('Chưa xác thực email', 'Vui lòng xác thực email trường trước khi đăng ký.', 'danger');
     return;
   }
+  submitting = true;
   setBtnLoading(btnRegister, 'Đang đăng ký...');
   result.innerHTML = '';
+  let code = 'ERROR', detail = '', refId = '';
   try{
-    const res = await apiPost('register', { programId: programId, authToken: token });
-    if (res.ok){
-      const msg = res.message || 'Đăng ký thành công.';
-      result.innerHTML = '<div class="alert success">✅ '+esc(msg)+'</div>';
-      showPopup('Đăng ký thành công', msg, 'success');
-      btnRegister.classList.add('hidden');
-    }else{
-      const msg = res.message || 'Không đăng ký được.';
-      result.innerHTML = '<div class="alert danger">'+esc(msg)+'</div>';
-      showPopup('Đăng ký không thành công', msg, 'danger');
-      resetBtn(btnRegister);
+    const res = await apiPost('register', { programId: programId, authToken: token }, 60000);
+    refId = (res && res.requestId) || '';
+    if (res && res.code){
+      code = res.code;
+      if (code === 'ERROR') detail = res.message || '';
+    } else {
+      // Không có mã rõ ràng (timeout / phản hồi lạ) → kiểm tra lại trong sheet trước khi kết luận
+      result.innerHTML = '<div class="alert info">Đang kiểm tra kết quả đăng ký, vui lòng chờ...</div>';
+      const registered = await verifyRegistered(token);
+      if (registered === true) code = 'SUCCESS';
+      else { code = 'ERROR'; detail = registered === false ? 'Chưa ghi nhận đăng ký' : 'Không xác định được kết quả'; }
     }
   }catch(err){
-    const msg = err.message || String(err);
-    result.innerHTML = '<div class="alert danger">'+esc(msg)+'</div>';
-    showPopup('Lỗi đăng ký', msg, 'danger');
-    resetBtn(btnRegister);
+    const registered = await verifyRegistered(token);
+    if (registered === true) code = 'SUCCESS';
+    else { code = 'ERROR'; detail = (err && err.message) || ''; }
   }
+  submitting = false;
+  showRegisterOutcome(code, detail, refId);
+  refreshProgramStatus();
 }
 </script>
 </body>
