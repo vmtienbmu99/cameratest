@@ -14,7 +14,7 @@
     };
   </script>
   
-  <script src="./assets/api.js?v=20260625d"></script>
+  <script src="./assets/api.js?v=20261102a"></script>
 </head>
 <body>
   <div class="topbar"><div class="wrap"><div class="brand">
@@ -301,119 +301,124 @@ function getLocationOptional(){
     navigator.geolocation.getCurrentPosition(
       pos => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
       () => resolve(null),
-      { enableHighAccuracy:true, timeout:7000, maximumAge:0 }
+      { enableHighAccuracy:true, timeout:4000, maximumAge:0 }
     );
   });
 }
 
-/**
- * Xử lý phản hồi từ apiPost/apiGet — Apps Script đôi khi trả về JSON lồng nhau
- * (double-encoded string) khiến res.ok và res.message bị undefined.
- * Hàm này parse đến khi ra object thật sự.
- */
-function parseApiResponse(raw) {
-  let parsed = raw;
-  try {
-    let limit = 3; // tối đa 3 lần parse để tránh vòng lặp vô tận
-    while (typeof parsed === 'string' && limit-- > 0) {
-      parsed = JSON.parse(parsed);
-    }
-  } catch (e) {
-    // Nếu parse lỗi mà vẫn còn là string thô thì trả về dạng lỗi
-    if (typeof parsed === 'string') {
-      return { ok: false, message: parsed || 'Không đọc được phản hồi từ máy chủ.' };
-    }
-  }
-  // Kiểm tra lần cuối: nếu parsed không phải object hợp lệ
-  if (!parsed || typeof parsed !== 'object') {
-    return { ok: false, message: 'Phản hồi từ máy chủ không hợp lệ.' };
-  }
-  return parsed;
+// ===== Gửi điểm danh =====
+const MSG_ATT_CONTACT = 'Điểm danh thất bại. Vui lòng liên hệ Phòng CTSV để được hỗ trợ.';
+let attSubmitting = false;
+
+function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+
+// Ẩn hẳn các nút (dùng style.display để chắc chắn ẩn được, kể cả nút đang có inline style)
+function hideAttendanceButtons(){
+  [btnSubmit, btnCamera, btnCapture, btnRetake].forEach(function(b){ if (b) b.style.display = 'none'; });
 }
 
-/** Hiển thị thành công điểm danh và ẩn toàn bộ nút */
-function onAttendanceSuccess(msg) {
-  result.innerHTML = '<div class="alert success">✅ ' + esc(msg) + '</div>';
-  showPopup('Điểm danh thành công', msg, 'success');
-  btnSubmit.classList.add('hidden');
-  btnCamera.classList.add('hidden');
-  btnCapture.style.display = 'none';
-  btnRetake.style.display = 'none';
-  stopCamera();
+// Kiểm tra thẳng trong sheet: true = đã ghi nhận, false = chưa ghi nhận, null = không xác định
+async function verifyAttended(token){
+  for (let i = 0; i < 3; i++){
+    try{
+      const c = await apiGet('check-attendance', { programId: programId, authToken: token }, 30000);
+      if (c && c.ok) return c.trangThaiDiemDanh === 'Đã điểm danh';
+    }catch(e){}
+    await sleep(2500);
+  }
+  return null;
+}
+
+function showAttendanceOutcome(code, detail, refId){
+  let msg, title, type, finished = false;
+  if (code === 'SUCCESS'){
+    msg = 'Điểm danh thành công.'; title = 'Điểm danh thành công'; type = 'success'; finished = true;
+  } else if (code === 'ALREADY'){
+    msg = 'Bạn đã điểm danh chương trình này rồi.'; title = 'Đã điểm danh'; type = 'success'; finished = true;
+  } else if (code === 'NOT_REGISTERED'){
+    msg = 'Điểm danh thất bại. Lý do: bạn chưa có tên trong danh sách đăng ký thành công của chương trình này.';
+    title = 'Điểm danh thất bại'; type = 'danger';
+  } else if (code === 'CLOSED'){
+    msg = 'Điểm danh thất bại. Lý do: chương trình hiện chưa mở điểm danh hoặc đã hết thời gian điểm danh.';
+    title = 'Điểm danh thất bại'; type = 'danger';
+  } else {
+    msg = MSG_ATT_CONTACT + (detail ? ' (Chi tiết: ' + detail + ')' : '') + (refId ? ' Mã tham chiếu: ' + refId : '');
+    title = 'Điểm danh thất bại'; type = 'danger';
+  }
+  result.innerHTML = '<div class="alert ' + (type === 'success' ? 'success' : 'danger') + '">' + (type === 'success' ? '✅ ' : '') + esc(msg) + '</div>';
+  showPopup(title, msg, type);
+  if (finished){
+    stopCamera();
+    hideAttendanceButtons();
+  } else {
+    resetBtn(btnSubmit);
+  }
+}
+
+// Đọc kết quả từ phản hồi; trả về {code, detail} hoặc null nếu phản hồi không rõ ràng
+function readAttendanceResponse(res){
+  if (res && res.code) return { code: res.code, detail: res.code === 'ERROR' ? (res.message || '') : '' };
+  return null;
 }
 
 async function submitAttendance(){
+  if (attSubmitting) return;
   const auth = getAuth();
   const token = currentToken || auth.token;
   if (!token){ renderAuth(); result.innerHTML='<div class="alert danger">Vui lòng xác thực email trường trước.</div>'; return; }
   if (!capturedImageBase64){ result.innerHTML='<div class="alert danger">Vui lòng chụp ảnh trước khi gửi điểm danh.</div>'; return; }
 
+  attSubmitting = true;
   setBtnLoading(btnSubmit, 'Đang gửi điểm danh...');
   result.innerHTML = '<div class="alert info">Đang gửi ảnh và ghi nhận điểm danh. Vui lòng chờ...</div>';
 
-  try {
+  let outcome = { code: 'ERROR', detail: '' };
+  let refId = '';
+  try{
     const gps = await getLocationOptional();
-    const raw = await apiPost('attendance', {
+    const payload = {
       programId: programId,
       authToken: token,
       imageBase64: capturedImageBase64,
       hasGps: gps ? 'true' : 'false',
       latitude: gps ? gps.latitude : '',
       longitude: gps ? gps.longitude : ''
-    });
+    };
 
-    // ── Parse phản hồi — xử lý cả trường hợp double-encoded JSON ──
-    const res = parseApiResponse(raw);
+    // Trải đều thời điểm gửi để tránh quá tải khi cả lớp bấm cùng lúc
+    await sleep(Math.floor(Math.random() * 1000));
 
-    if (res.ok) {
-      // ✅ Thành công rõ ràng từ backend
-      onAttendanceSuccess(res.message || 'Điểm danh thành công.');
-      return;
-    }
+    let res = await apiPost('attendance', payload, 90000);
+    refId = (res && res.requestId) || '';
+    let parsed = readAttendanceResponse(res);
 
-    // ── Trường hợp timeout hoặc không nhận được phản hồi ──
-    if (res.timeout) {
-      result.innerHTML = '<div class="alert warning">⏳ Chưa nhận được phản hồi từ máy chủ. Đang kiểm tra lại trạng thái điểm danh...</div>';
-      let checkResult = null;
-      let checkError = null;
-      try {
-        checkResult = parseApiResponse(
-          await apiGet('check-attendance', { programId: programId, authToken: token })
-        );
-      } catch (e) {
-        checkError = e.message || String(e);
+    if (!parsed){
+      // Không nhận được phản hồi rõ ràng → kiểm tra thực tế trong sheet trước khi kết luận
+      result.innerHTML = '<div class="alert info">Đang kiểm tra kết quả điểm danh, vui lòng chờ...</div>';
+      const attended = await verifyAttended(token);
+      if (attended === true){
+        parsed = { code: 'SUCCESS' };
+      } else if (attended === false){
+        // Chưa được ghi nhận → tự gửi lại 1 lần (backend đã chống ghi trùng)
+        result.innerHTML = '<div class="alert info">Chưa ghi nhận được, đang tự gửi lại...</div>';
+        res = await apiPost('attendance', payload, 90000);
+        refId = (res && res.requestId) || refId;
+        parsed = readAttendanceResponse(res);
+        if (!parsed){
+          const attended2 = await verifyAttended(token);
+          parsed = attended2 === true ? { code: 'SUCCESS' } : { code: 'ERROR', detail: 'Không nhận được phản hồi từ máy chủ' };
+        }
+      } else {
+        parsed = { code: 'ERROR', detail: 'Không xác định được kết quả' };
       }
-
-      if (checkResult && checkResult.ok && checkResult.trangThaiDiemDanh === 'Đã điểm danh') {
-        // Sheet đã ghi nhận — hiện thành công
-        const msg = 'Điểm danh đã được ghi nhận thành công.' +
-                    (checkResult.linkAnh ? ' Ảnh đã lưu.' : '');
-        onAttendanceSuccess(msg);
-        return;
-      }
-
-      // Check cũng không xác nhận được → thông báo rõ để sinh viên liên hệ
-      const timeoutMsg = 'Máy chủ chưa phản hồi kịp. Vui lòng đợi 1–2 phút rồi tải lại trang để kiểm tra. Nếu tên bạn đã có trong danh sách thì điểm danh đã thành công.' +
-                        (checkError ? ' (Lỗi kiểm tra: ' + checkError + ')' : '');
-      result.innerHTML = '<div class="alert warning">⏳ ' + esc(timeoutMsg) + '</div>';
-      showPopup('Chưa xác nhận được', timeoutMsg, 'warning');
-      resetBtn(btnSubmit);
-      btnSubmit.textContent = '📋 Thử gửi lại';
-      return;
     }
-
-    // ── Thất bại có lý do rõ ràng từ backend ──
-    const msg = res.message || 'Điểm danh không thành công. Vui lòng thử lại.';
-    result.innerHTML = '<div class="alert danger">' + esc(msg) + '</div>';
-    showPopup('Điểm danh thất bại', msg, 'danger');
-    resetBtn(btnSubmit);
-
-  } catch (err) {
-    const msg = err.message || String(err);
-    result.innerHTML = '<div class="alert danger">' + esc(msg) + '</div>';
-    showPopup('Lỗi điểm danh', msg, 'danger');
-    resetBtn(btnSubmit);
+    outcome = parsed;
+  }catch(err){
+    const attended = await verifyAttended(token);
+    outcome = attended === true ? { code: 'SUCCESS' } : { code: 'ERROR', detail: (err && err.message) || String(err) };
   }
+  attSubmitting = false;
+  showAttendanceOutcome(outcome.code, outcome.detail || '', refId);
 }
 
 function captureBase64FromVideo(){
