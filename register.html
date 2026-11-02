@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Điểm danh chương trình</title>
+  <title>Đăng ký chương trình</title>
   <link rel="stylesheet" href="./assets/style.css?v=logo2">
   <script>
     window.BMU_CONFIG = {
@@ -25,25 +25,11 @@
 
   <main class="page">
     <section class="card">
-      <h1>Điểm danh chương trình</h1>
-      <p class="notice">Khi điểm danh, sinh viên chụp hình cá nhân rõ mặt.</p>
+      <h1>Đăng ký tham gia chương trình</h1>
       <div id="programBox" class="alert info">Đang tải thông tin chương trình...</div>
       <div id="authBox" class="hidden"></div>
       <div id="studentBox" class="hidden"></div>
-
-      <div id="cameraArea" class="hidden">
-        <div class="camera-frame" onclick="startCamera()">
-          <video id="videoPreview" muted playsinline webkit-playsinline></video>
-          <img id="photoPreview" alt="Ảnh đã chụp">
-          <div class="camera-hint" id="cameraHint">Bấm vào đây hoặc nút bên dưới để bật camera</div>
-        </div>
-        <canvas id="canvas"></canvas>
-        <button class="btn" id="btnCamera" onclick="startCamera()">📷 Bật camera</button>
-        <button class="btn" id="btnCapture" onclick="capturePhoto()" style="display:none">📸 Chụp ảnh điểm danh</button>
-        <button class="btn secondary" id="btnRetake" onclick="retakePhoto()" style="display:none">Chụp lại</button>
-        <button class="btn" id="btnSubmit" onclick="submitAttendance()" style="display:none">📋 Gửi điểm danh</button>
-        <div class="capture-note" id="captureNote"></div>
-      </div>
+      <button class="btn hidden" id="btnRegister" onclick="submitRegistration()">Xác nhận đăng ký</button>
       <div id="result"></div>
     </section>
   </main>
@@ -53,24 +39,12 @@ const programId = getParam('programId');
 let currentProgram = null;
 let currentStudent = null;
 let currentToken = '';
-let stream = null;
-let videoReady = false;
-let capturedImageBase64 = '';
 
 const programBox = document.getElementById('programBox');
 const authBox = document.getElementById('authBox');
 const studentBox = document.getElementById('studentBox');
-const cameraArea = document.getElementById('cameraArea');
+const btnRegister = document.getElementById('btnRegister');
 const result = document.getElementById('result');
-const video = document.getElementById('videoPreview');
-const canvas = document.getElementById('canvas');
-const photoPreview = document.getElementById('photoPreview');
-const btnCamera = document.getElementById('btnCamera');
-const btnCapture = document.getElementById('btnCapture');
-const btnRetake = document.getElementById('btnRetake');
-const btnSubmit = document.getElementById('btnSubmit');
-const hint = document.getElementById('cameraHint');
-const captureNote = document.getElementById('captureNote');
 
 init();
 
@@ -80,14 +54,16 @@ async function init(){
     programBox.textContent = 'Thiếu mã chương trình trên đường link.';
     return;
   }
+
   try{
     const auth = getAuth();
-    const res = await apiGet('init-attendance', { programId: programId, authToken: auth.token });
+    const res = await apiGet('init-register', { programId: programId, authToken: auth.token });
     if (!res.ok) throw new Error(res.message || 'Không lấy được dữ liệu.');
     if (!res.program || !res.program.ok) throw new Error(res.program && res.program.message ? res.program.message : 'Không tìm thấy chương trình.');
 
     currentProgram = res.program;
     renderProgram(currentProgram);
+    startLiveRefresh();
 
     if (res.auth && res.auth.ok){
       currentToken = auth.token;
@@ -110,17 +86,19 @@ function renderProgram(p){
     <div class="info-row"><span class="label">Mã chương trình</span><span class="value">${esc(programId)}</span></div>
     <div class="info-row"><span class="label">Chương trình</span><span class="value">${esc(p.tenChuongTrinh || '')}</span></div>
     <div class="info-row"><span class="label">Địa điểm</span><span class="value">${esc(p.diaDiem || '—')}</span></div>
-    <div class="info-row"><span class="label">Trạng thái điểm danh</span><span class="value">${esc(p.trangThaiDiemDanh || '—')}</span></div>
+    <div class="info-row"><span class="label">Thời gian tổ chức</span><span class="value">${esc(p.thoiGianToChuc || '—')}</span></div>
+    <div class="info-row"><span class="label">Trạng thái đăng ký</span><span class="value" id="statusValue">${esc(p.trangThaiDangKy || '—')}</span></div>
+    <div class="info-row"><span class="label">Số lượng</span><span class="value"><span id="countValue">${esc(p.soLuongDaDangKy || 0)}</span> / ${esc(p.soLuongGioiHan || 'Không giới hạn')}</span></div>
   `;
 }
 
 function renderAuth(){
-  cameraArea.classList.add('hidden');
+  btnRegister.classList.add('hidden');
   studentBox.classList.add('hidden');
   authBox.classList.remove('hidden');
   authBox.innerHTML = `
     <h3>Xác thực email trường</h3>
-    <div class="alert info">Nhập email trường để nhận mã OTP. Sau khi xác thực mới có thể điểm danh.</div>
+    <div class="alert info">Nhập email trường để nhận mã OTP. Hệ thống chỉ chấp nhận email có trong danh sách sinh viên.</div>
     <div class="form-group">
       <label>Email trường</label>
       <input id="emailInput" type="email" placeholder="vd: mssv@bmu.edu.vn" autocomplete="email">
@@ -150,15 +128,10 @@ async function sendOtp(){
     if (res.ok){
       document.getElementById('otpArea').classList.remove('hidden');
       result.innerHTML = '<div class="alert success">✅ '+esc(res.message || 'Đã gửi mã OTP về email trường.')+'</div>';
-      showToast(res.message || 'Đã gửi mã OTP về email trường.', 'success');
     }else{
       result.innerHTML = '<div class="alert danger">'+esc(res.message || 'Không gửi được OTP.')+'</div>';
-      showPopup('Gửi OTP thất bại', res.message || 'Không gửi được OTP.', 'danger');
     }
-  }catch(err){
-    result.innerHTML = '<div class="alert danger">'+esc(err.message || err)+'</div>';
-    showPopup('Lỗi gửi OTP', err.message || String(err), 'danger');
-  }
+  }catch(err){ result.innerHTML = '<div class="alert danger">'+esc(err.message || err)+'</div>'; }
   resetBtn(btn);
 }
 
@@ -178,15 +151,10 @@ async function verifyOtp(){
       authBox.classList.add('hidden');
       renderStudent(currentStudent);
       result.innerHTML = '<div class="alert success">✅ Xác thực thành công.</div>';
-      showToast('Xác thực thành công.', 'success');
     }else{
       result.innerHTML = '<div class="alert danger">'+esc(res.message || 'OTP không hợp lệ.')+'</div>';
-      showPopup('Xác thực thất bại', res.message || 'OTP không hợp lệ.', 'danger');
     }
-  }catch(err){
-    result.innerHTML = '<div class="alert danger">'+esc(err.message || err)+'</div>';
-    showPopup('Lỗi xác thực', err.message || String(err), 'danger');
-  }
+  }catch(err){ result.innerHTML = '<div class="alert danger">'+esc(err.message || err)+'</div>'; }
   resetBtn(btn);
 }
 
@@ -203,246 +171,124 @@ function renderStudent(s){
     </div>
     <button class="btn secondary" onclick="logoutAuth()">Đổi email xác thực</button>
   `;
-  cameraArea.classList.remove('hidden');
+  btnRegister.classList.remove('hidden');
 }
 
-function logoutAuth(){
-  clearAuth(); currentToken=''; currentStudent=null; capturedImageBase64=''; result.innerHTML='';
-  stopCamera(); resetCaptureUi(); renderAuth();
-}
+function logoutAuth(){ clearAuth(); currentToken=''; currentStudent=null; result.innerHTML=''; renderAuth(); }
 
-async function startCamera(){
-  result.innerHTML = '';
-  if (videoReady && stream) return;
-  setBtnLoading(btnCamera, 'Đang mở camera...');
-  try{
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('Trình duyệt không hỗ trợ camera.');
-    try{
-      stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user' }, audio:false });
-    }catch(e){
-      stream = await navigator.mediaDevices.getUserMedia({ video:true, audio:false });
-    }
-    video.srcObject = stream;
-    video.muted = true;
-    video.setAttribute('playsinline','');
-    video.setAttribute('webkit-playsinline','');
-    await video.play();
-    videoReady = true;
-    btnCamera.innerHTML = '✅ Camera đã bật';
-    btnCamera.disabled = false;
-    btnCamera.classList.add('success');
-    btnCapture.style.display = 'flex';
-    btnSubmit.style.display = 'none';
-    btnRetake.style.display = 'none';
-    photoPreview.style.display = 'none';
-    video.style.display = 'block';
-    if (hint) hint.style.display = 'none';
-    captureNote.textContent = 'Sau khi camera hiển thị rõ mặt, bấm “Chụp ảnh điểm danh”.';
-  }catch(err){
-    resetBtn(btnCamera);
-    btnCamera.innerHTML = '📷 Bật camera';
-    btnCamera.classList.remove('success');
-    result.innerHTML = '<div class="alert danger">Không mở được camera: '+esc(err.message || err)+'</div>';
-    showPopup('Không mở được camera', err.message || String(err), 'danger');
-  }
-}
+// ===== Cập nhật số lượng gần thời gian thực =====
+let refreshTimer = null;
+let submitting = false;
 
-function capturePhoto(){
-  if (!videoReady || !stream || !video.srcObject){
-    result.innerHTML = '<div class="alert danger">Chưa bật camera, không thể chụp ảnh.</div>';
-    return;
-  }
-  if (!video.videoWidth || !video.videoHeight){
-    result.innerHTML = '<div class="alert danger">Camera chưa sẵn sàng. Vui lòng chờ vài giây rồi chụp lại.</div>';
-    return;
-  }
-  capturedImageBase64 = captureBase64FromVideo();
-  photoPreview.src = 'data:image/jpeg;base64,' + capturedImageBase64;
-  photoPreview.style.display = 'block';
-  video.style.display = 'none';
-  btnCapture.style.display = 'none';
-  btnRetake.style.display = 'flex';
-  btnSubmit.style.display = 'flex';
-  captureNote.textContent = 'Ảnh đã được chụp. Dung lượng đã nén: khoảng ' + Math.round(capturedImageBase64.length * 0.75 / 1024) + ' KB.';
-  result.innerHTML = '<div class="alert success">✅ Đã chụp ảnh. Bấm “Gửi điểm danh” để hoàn tất.</div>';
-}
-
-function retakePhoto(){
-  capturedImageBase64 = '';
-  result.innerHTML = '';
-  photoPreview.src = '';
-  photoPreview.style.display = 'none';
-  video.style.display = 'block';
-  btnRetake.style.display = 'none';
-  btnSubmit.style.display = 'none';
-  if (videoReady){
-    btnCapture.style.display = 'flex';
-    captureNote.textContent = 'Sau khi camera hiển thị rõ mặt, bấm “Chụp ảnh điểm danh”.';
-  }else{
-    btnCapture.style.display = 'none';
-    captureNote.textContent = '';
-  }
-}
-
-function resetCaptureUi(){
-  capturedImageBase64 = '';
-  photoPreview.src = '';
-  photoPreview.style.display = 'none';
-  video.style.display = 'block';
-  btnCapture.style.display = 'none';
-  btnRetake.style.display = 'none';
-  btnSubmit.style.display = 'none';
-  captureNote.textContent = '';
-}
-
-function getLocationOptional(){
-  return new Promise(function(resolve){
-    if (!navigator.geolocation) return resolve(null);
-    navigator.geolocation.getCurrentPosition(
-      pos => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
-      () => resolve(null),
-      { enableHighAccuracy:true, timeout:4000, maximumAge:0 }
-    );
+function startLiveRefresh(){
+  stopLiveRefresh();
+  refreshTimer = setInterval(refreshProgramStatus, 8000);
+  document.addEventListener('visibilitychange', function(){
+    if (!document.hidden) refreshProgramStatus();
   });
 }
+function stopLiveRefresh(){ if (refreshTimer){ clearInterval(refreshTimer); refreshTimer = null; } }
 
-// ===== Gửi điểm danh =====
-const MSG_ATT_CONTACT = 'Điểm danh thất bại. Vui lòng liên hệ Phòng CTSV để được hỗ trợ.';
-let attSubmitting = false;
+async function refreshProgramStatus(){
+  if (submitting || document.hidden) return;
+  try{
+    const p = await apiGet('program-status', { programId: programId }, 20000);
+    if (!p || !p.ok) return;
+    currentProgram = p;
+    applyProgramLive(p);
+  }catch(e){ /* bỏ qua lỗi mạng tạm thời */ }
+}
+
+function applyProgramLive(p){
+  const c = document.getElementById('countValue');
+  const st = document.getElementById('statusValue');
+  if (c) c.textContent = p.soLuongDaDangKy || 0;
+  if (st) st.textContent = p.trangThaiDangKy || '—';
+  const limit = Number(p.soLuongGioiHan || 0);
+  const full = (limit > 0 && Number(p.soLuongDaDangKy || 0) >= limit) || p.trangThaiDangKy === 'Đã đủ số lượng';
+  if (full && !btnRegister.classList.contains('hidden') && !submitting){
+    btnRegister.classList.add('hidden');
+    result.innerHTML = '<div class="alert danger">Chương trình đã đủ số lượng sinh viên đăng ký.</div>';
+  }
+}
+
+// ===== Đăng ký =====
+const MSG_CONTACT = 'Đăng ký thất bại. Vui lòng liên hệ Phòng CTSV để được hỗ trợ.';
 
 function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
 
-// Ẩn hẳn các nút (dùng style.display để chắc chắn ẩn được, kể cả nút đang có inline style)
-function hideAttendanceButtons(){
-  [btnSubmit, btnCamera, btnCapture, btnRetake].forEach(function(b){ if (b) b.style.display = 'none'; });
-}
-
-// Kiểm tra thẳng trong sheet: true = đã ghi nhận, false = chưa ghi nhận, null = không xác định
-async function verifyAttended(token){
+// Khi không nhận được phản hồi rõ ràng, kiểm tra thẳng trong danh sách đăng ký
+async function verifyRegistered(token){
   for (let i = 0; i < 3; i++){
     try{
-      const c = await apiGet('check-attendance', { programId: programId, authToken: token }, 30000);
-      if (c && c.ok) return c.trangThaiDiemDanh === 'Đã điểm danh';
+      const c = await apiGet('check-registration', { programId: programId, authToken: token }, 30000);
+      if (c && c.ok) return !!c.registered;
     }catch(e){}
     await sleep(2500);
   }
-  return null;
+  return null; // không xác định được
 }
 
-function showAttendanceOutcome(code, detail, refId){
-  let msg, title, type, finished = false;
+function showRegisterOutcome(code, detail, refId){
   if (code === 'SUCCESS'){
-    msg = 'Điểm danh thành công.'; title = 'Điểm danh thành công'; type = 'success'; finished = true;
+    const msg = 'Đăng ký thành công.';
+    result.innerHTML = '<div class="alert success">✅ '+esc(msg)+'</div>';
+    showPopup('Đăng ký thành công', msg, 'success');
+    btnRegister.classList.add('hidden');
   } else if (code === 'ALREADY'){
-    msg = 'Bạn đã điểm danh chương trình này rồi.'; title = 'Đã điểm danh'; type = 'success'; finished = true;
-  } else if (code === 'NOT_REGISTERED'){
-    msg = 'Điểm danh thất bại. Lý do: bạn chưa có tên trong danh sách đăng ký thành công của chương trình này.';
-    title = 'Điểm danh thất bại'; type = 'danger';
-  } else if (code === 'CLOSED'){
-    msg = 'Điểm danh thất bại. Lý do: chương trình hiện chưa mở điểm danh hoặc đã hết thời gian điểm danh.';
-    title = 'Điểm danh thất bại'; type = 'danger';
+    const msg = 'Bạn đã đăng ký thành công chương trình này rồi.';
+    result.innerHTML = '<div class="alert success">✅ '+esc(msg)+'</div>';
+    showPopup('Đã đăng ký thành công', msg, 'success');
+    btnRegister.classList.add('hidden');
+  } else if (code === 'FULL'){
+    const msg = 'Đăng ký thất bại. Lý do: chương trình đã đủ số lượng sinh viên đăng ký.';
+    result.innerHTML = '<div class="alert danger">'+esc(msg)+'</div>';
+    showPopup('Đăng ký thất bại', msg, 'danger');
+    btnRegister.classList.add('hidden');
   } else {
-    msg = MSG_ATT_CONTACT + (detail ? ' (Chi tiết: ' + detail + ')' : '') + (refId ? ' Mã tham chiếu: ' + refId : '');
-    title = 'Điểm danh thất bại'; type = 'danger';
-  }
-  result.innerHTML = '<div class="alert ' + (type === 'success' ? 'success' : 'danger') + '">' + (type === 'success' ? '✅ ' : '') + esc(msg) + '</div>';
-  showPopup(title, msg, type);
-  if (finished){
-    stopCamera();
-    hideAttendanceButtons();
-  } else {
-    resetBtn(btnSubmit);
+    const msg = MSG_CONTACT + (detail ? ' (Chi tiết: ' + detail + ')' : '') + (refId ? ' Mã tham chiếu: ' + refId : '');
+    result.innerHTML = '<div class="alert danger">'+esc(msg)+'</div>';
+    showPopup('Đăng ký thất bại', msg, 'danger');
+    resetBtn(btnRegister);
   }
 }
 
-// Đọc kết quả từ phản hồi; trả về {code, detail} hoặc null nếu phản hồi không rõ ràng
-function readAttendanceResponse(res){
-  if (res && res.code) return { code: res.code, detail: res.code === 'ERROR' ? (res.message || '') : '' };
-  return null;
-}
-
-async function submitAttendance(){
-  if (attSubmitting) return;
+async function submitRegistration(){
+  if (submitting) return;
   const auth = getAuth();
   const token = currentToken || auth.token;
-  if (!token){ renderAuth(); result.innerHTML='<div class="alert danger">Vui lòng xác thực email trường trước.</div>'; return; }
-  if (!capturedImageBase64){ result.innerHTML='<div class="alert danger">Vui lòng chụp ảnh trước khi gửi điểm danh.</div>'; return; }
-
-  attSubmitting = true;
-  setBtnLoading(btnSubmit, 'Đang gửi điểm danh...');
-  result.innerHTML = '<div class="alert info">Đang gửi ảnh và ghi nhận điểm danh. Vui lòng chờ...</div>';
-
-  let outcome = { code: 'ERROR', detail: '' };
-  let refId = '';
-  try{
-    const gps = await getLocationOptional();
-    const payload = {
-      programId: programId,
-      authToken: token,
-      imageBase64: capturedImageBase64,
-      hasGps: gps ? 'true' : 'false',
-      latitude: gps ? gps.latitude : '',
-      longitude: gps ? gps.longitude : ''
-    };
-
-    // Trải đều thời điểm gửi để tránh quá tải khi cả lớp bấm cùng lúc
-    await sleep(Math.floor(Math.random() * 1000));
-
-    let res = await apiPost('attendance', payload, 90000);
-    refId = (res && res.requestId) || '';
-    let parsed = readAttendanceResponse(res);
-
-    if (!parsed){
-      // Không nhận được phản hồi rõ ràng → kiểm tra thực tế trong sheet trước khi kết luận
-      result.innerHTML = '<div class="alert info">Đang kiểm tra kết quả điểm danh, vui lòng chờ...</div>';
-      const attended = await verifyAttended(token);
-      if (attended === true){
-        parsed = { code: 'SUCCESS' };
-      } else if (attended === false){
-        // Chưa được ghi nhận → tự gửi lại 1 lần (backend đã chống ghi trùng)
-        result.innerHTML = '<div class="alert info">Chưa ghi nhận được, đang tự gửi lại...</div>';
-        res = await apiPost('attendance', payload, 90000);
-        refId = (res && res.requestId) || refId;
-        parsed = readAttendanceResponse(res);
-        if (!parsed){
-          const attended2 = await verifyAttended(token);
-          parsed = attended2 === true ? { code: 'SUCCESS' } : { code: 'ERROR', detail: 'Không nhận được phản hồi từ máy chủ' };
-        }
-      } else {
-        parsed = { code: 'ERROR', detail: 'Không xác định được kết quả' };
-      }
-    }
-    outcome = parsed;
-  }catch(err){
-    const attended = await verifyAttended(token);
-    outcome = attended === true ? { code: 'SUCCESS' } : { code: 'ERROR', detail: (err && err.message) || String(err) };
+  if (!token){
+    renderAuth();
+    result.innerHTML='<div class="alert danger">Vui lòng xác thực email trường trước.</div>';
+    showPopup('Chưa xác thực email', 'Vui lòng xác thực email trường trước khi đăng ký.', 'danger');
+    return;
   }
-  attSubmitting = false;
-  showAttendanceOutcome(outcome.code, outcome.detail || '', refId);
+  submitting = true;
+  setBtnLoading(btnRegister, 'Đang đăng ký...');
+  result.innerHTML = '';
+  let code = 'ERROR', detail = '', refId = '';
+  try{
+    const res = await apiPost('register', { programId: programId, authToken: token }, 60000);
+    refId = (res && res.requestId) || '';
+    if (res && res.code){
+      code = res.code;
+      if (code === 'ERROR') detail = res.message || '';
+    } else {
+      // Không có mã rõ ràng (timeout / phản hồi lạ) → kiểm tra lại trong sheet trước khi kết luận
+      result.innerHTML = '<div class="alert info">Đang kiểm tra kết quả đăng ký, vui lòng chờ...</div>';
+      const registered = await verifyRegistered(token);
+      if (registered === true) code = 'SUCCESS';
+      else { code = 'ERROR'; detail = registered === false ? 'Chưa ghi nhận đăng ký' : 'Không xác định được kết quả'; }
+    }
+  }catch(err){
+    const registered = await verifyRegistered(token);
+    if (registered === true) code = 'SUCCESS';
+    else { code = 'ERROR'; detail = (err && err.message) || ''; }
+  }
+  submitting = false;
+  showRegisterOutcome(code, detail, refId);
+  refreshProgramStatus();
 }
-
-function captureBase64FromVideo(){
-  // Nén mạnh để gửi qua Apps Script ổn định trên điện thoại.
-  const maxSize = 480;
-  let w = video.videoWidth;
-  let h = video.videoHeight;
-  if (w > h && w > maxSize){ h = Math.round(h * maxSize / w); w = maxSize; }
-  if (h >= w && h > maxSize){ w = Math.round(w * maxSize / h); h = maxSize; }
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(video, 0, 0, w, h);
-  return canvas.toDataURL('image/jpeg', 0.45).split(',')[1];
-}
-
-function stopCamera(){
-  if (stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
-  video.srcObject = null;
-  videoReady = false;
-  if (hint) hint.style.display = 'flex';
-  if (btnCamera){ btnCamera.innerHTML='📷 Bật camera'; btnCamera.classList.remove('success'); btnCamera.disabled=false; }
-}
-window.addEventListener('beforeunload', stopCamera);
 </script>
 </body>
 </html>
